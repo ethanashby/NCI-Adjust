@@ -18,9 +18,12 @@ create_multivar_survival <- function(n,
                         per_year_incidence_C,
                         J=1,
                         rho,
-                        admin_date=2
+                        admin_date=2,
+                        convert_days = TRUE
 ){
   
+  require(tidyverse)
+  require(copula)
   # n=1000
   # per_year_incidence_Y=0.05
   # RR=0.5
@@ -61,9 +64,18 @@ create_multivar_survival <- function(n,
     A==0, oracle_vars[,1], oracle_vars[,2]
   )
   
-  observed_vars<- data.frame(A=A, Y=observed_vars)
+  if(convert_days){
+    observed_vars<- data.frame(A=A, Y=pmax(1, round(observed_vars * 365)))
+  }else{
+    observed_vars<- data.frame(A=A, Y=observed_vars)
+  }
+  
   for(i in 1:J){
+    if(convert_days){
+    observed_vars[[paste0("N", i)]]<-pmax(1, round(oracle_vars[,i+2] * 365))
+    }else{
     observed_vars[[paste0("N", i)]]<-oracle_vars[,i+2]
+    }
   }
   
   #censoring
@@ -75,7 +87,12 @@ create_multivar_survival <- function(n,
   observed_cens = ifelse(
     A==0, cens_times[,1], cens_times[,2]
   )
-  observed_cens <- pmin(observed_cens, admin_date)
+  
+  if(convert_days){
+    observed_cens <- pmax(1, round(pmin(observed_cens, admin_date) * 365))
+  }else{
+    observed_cens <- pmin(observed_cens, admin_date)
+  }
   
   #observed_vars$DeltaY<-ifelse(observed_vars$Y<=observed_cens, observed_vars$DeltaY, 0)
   #observed_vars$Y <- ifelse(observed_vars$Y<=observed_cens, observed_vars$Y, observed_cens)

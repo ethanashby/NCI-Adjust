@@ -38,15 +38,15 @@ run_on_cluster(
       
       #L<-sim$levels_grid[60,]
       
-      L<-list(n=5000, 
+      L<-list(n=2000, 
               trt_prob=0.50, 
               RR=0.5, 
-              RR_C=2.5, 
+              RR_C=1.5, 
               per_year_incidence_Y = 0.05, 
               per_year_incidence_N = 0.15,
-              per_year_incidence_C = 0.25,
+              per_year_incidence_C = 0.10,
               J = 3,
-              rho = 0.85,
+              rho = 0.4,
               admin_date=2, burn_in =15, MC_samples = 15)
       
       data <- create_multivar_survival(n=L$n, 
@@ -60,43 +60,46 @@ run_on_cluster(
                                        rho = L$rho, 
                                        admin_date=L$admin_date)
       
+      #plot(survfit(Surv(data$N1, data$DeltaN1)~data$A), fun="event") # confirms that N1 is NCI
+      #plot(survfit(Surv(data$N1, 1-data$DeltaN1)~data$A), fun="event") # confirms that censoring is affected by treatment
+      
       res_KM <- KM_est(dat=data, T.name = "Y", Delta.name = "DeltaY", A.name = "A", eval_t = L$admin_date)
       
-      X <- data %>% transmute(
-        N = N1,
-        DeltaN = N1
-      )
-        
-        transmute(N=pmin(N1, N2, N3), 
-                              DeltaN=case_when(N==N1 ~ DeltaN1, 
-                                               N==N2 ~ DeltaN2, 
-                                               N==N3 ~ DeltaN3)) %>% as.matrix()
+      # X <- data %>% transmute(#N=pmin(N1, N2, N3), 
+      #                         DeltaN=case_when(pmin(N1, N2, N3)==N1 ~ DeltaN1, 
+      #                                          pmin(N1, N2, N3)==N2 ~ DeltaN2, 
+      #                                          pmin(N1, N2, N3)==N3 ~ DeltaN3,
+      #                                          .default = 0)) %>% as.matrix()
       #%>% dplyr::select(starts_with("N"), starts_with("DeltaN"))
       
-      fit<-CFsurvival(
-        time = data$Y,
-        event = data$DeltaY,
-        treat = data$A,
-        confounders = X,
-        fit.times = sort(unique(data$Y)),
-        contrasts = "risk.ratio",
-        conf.band=FALSE,
-        nuisance.options = list(
-          cross.fit=TRUE,
-          V=3,
-          event.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg",
-                             "survSL.weibreg", "survSL.loglogreg"), function(alg)
-                             c(alg, "survscreen.glmnet", "survscreen.marg", "All")),
-          #event.SL.library = "survSL.coxph",
-          # cens.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg",
-          #                            "survSL.weibreg", "survSL.loglogreg"), function(alg)
-          #                              c(alg, "survscreen.glmnet", "survscreen.marg", "All")),
-          prop.pred  = rep(0.5, length(data$Y))
-        )
-      )
+      # fit<-CFsurvival(
+      #   time = data$Y,
+      #   event = data$DeltaY,
+      #   treat = data$A,
+      #   confounders = X,
+      #   fit.times = sort(unique(data$Y[data$DeltaY==1])),
+      #   contrasts = "risk.ratio",
+      #   conf.band=FALSE,
+      #   nuisance.options = list(
+      #     cross.fit=TRUE,
+      #     V=3,
+      #     event.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg",
+      #                        "survSL.weibreg", "survSL.loglogreg"), function(alg)
+      #                        c(alg, "All")),
+      #     #event.SL.library = "survSL.coxph",
+      #     cens.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg",
+      #                                 "survSL.weibreg", "survSL.loglogreg"), function(alg)
+      #                                   c(alg, "All")),
+      #     prop.SL.library=NULL,
+      #     prop.pred  = rep(0.5, length(data$Y))
+      #   )
+      # )
       
-      gs_single <- multivariate_gibbs_sampling(dat=data %>% mutate(N=pmin(N1, N2, N3), 
-                                        DeltaN=case_when(N==N1 ~ DeltaN1, N==N2 ~ DeltaN2, N==N3 ~ DeltaN3)), 
+      gs_single <- multivariate_gibbs_sampling(dat=data %>% 
+                                                 mutate(N=pmin(N1, N2, N3), 
+                                                        DeltaN=case_when(N==N1 ~ DeltaN1, 
+                                                                         N==N2 ~ DeltaN2, 
+                                                                         N==N3 ~ DeltaN3)), 
                                         T.names=c("Y", "N"), 
                                         Delta.names = c("DeltaY", "DeltaN"), 
                                         primary_outcome_indx = 1, 
