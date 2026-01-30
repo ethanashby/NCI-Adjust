@@ -40,6 +40,1153 @@
 #' \item{data}{The original time, event, and treatment data supplied to the function.}
 #' @details \code{surv.df$ptwise.lower} and \code{surv.df$ptwise.upper} are lower and upper endpoints of back-transformed pointwise confidence intervals on the logit scale. Pointwise confidence intervals are only provided for values of \code{fit.times} that are at least as large as the smallest observed event time in the corresponding treatment cohort. \code{surv.df$unif.ew.lower} and \code{surv.df$unif.ew.upper} are lower and upper endpoints of an equal-width confidence band. \code{surv.df$unif.logit.lower} and \code{surv.df$unif.logit.upper} are lower and upper endpoints of an equi-precision confidence band on the logit scale, and trasformed back to the survival scale. This confidence band only covers values of \code{fit.times} such that the corresponding estimated survival function is \code{<= .99} and \code{>= .01}.
 
+CFsurvival3 <- function(time, 
+                        event,
+                        time_N,
+                        event_N,
+                        information_level,
+                        admin_t,
+                        treat, 
+                        W,
+                        id,
+                        fit.times=sort(unique(time[time > 0])), 
+                        fit.treat=c(0,1), 
+                        nuisance.options = list(), 
+                        conf.band=FALSE, 
+                        conf.level=.95, 
+                        contrasts = c("risk.ratio"), 
+                        verbose=TRUE,
+                        maxiter = 3) {
+  
+    time = data$Y;
+    event = data$DeltaY;
+    time_N = data$N1;
+    event_N = data$DeltaN1;
+    information_level = 3;
+    admin_t = round(365*L$admin_date);
+    treat = data$A;
+    W = data.frame(X=data$X); 
+    id = 1:nrow(data);
+    fit.times = sort(unique(data$Y));
+    fit.treat = c(0,1);
+    nuisance.options = CFsurvival.nuisance.options(
+      cross.fit = TRUE,
+      V = 5,
+      folds = NULL,
+      eval.times = NULL,
+      event.SL.library = c("survSL.km", 
+                           "survSL.coxph", 
+                           "survSL.expreg"),
+      event.pred.0 = NULL,
+      event.pred.1 = NULL,
+      cens.SL.library = c("survSL.km", 
+                          "survSL.coxph", 
+                          "survSL.expreg"),
+      cens.trunc = 0,
+      cens.pred.0 = NULL,
+      cens.pred.1 = NULL,
+      survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+      survSL.cvControl = list(V = 5),
+      save.nuis.fits = FALSE,
+      prop.SL.library = NULL,
+      prop.trunc = 0,
+      prop.pred = prop.fit,
+      verbose = TRUE
+    );
+    conf.band = FALSE;
+    conf.level = 0.95; 
+    contrasts = c("risk.ratio"); 
+    verbose = TRUE;
+    maxiter=3
+  
+  if(!(information_level %in% c(0,1,2,3))){
+    stop("information_level must be one of 0, 1, 2, or 3")
+  }
+  .args <- mget(names(formals()), sys.frame(sys.nframe()))
+  
+  # if(is.null(contrasts)) contrasts <- c("surv.diff", "surv.ratio")
+  
+  nuis <- do.call("CFsurvival.nuisance.options", nuisance.options)
+  
+  n <- length(time)
+  
+  if(length(unique(admin_t))==1){
+    admin_t = rep(admin_t, n)
+  }else if(length(unique(admin_t))==n){
+    admin_t=admin_t
+  }else{
+    stop("admin_t must be either a n x 1 vector or a scalar")
+  }
+  
+  if(sum(1-event) == 0) {
+    message("No censored events; unanticipated errors may occur.")
+    nuis$cens.pred.0 <- nuis$cens.pred.1 <- matrix(1, nrow=n, ncol=k)
+  }
+  if(sum(event) == 0) {
+    stop("No uncensored events; cannot perform estimation.")
+  }
+  
+  if(!nuis$cross.fit) {
+    if(!is.null(nuis$folds)) {
+      message("nuisance.options$cross.fit set to FALSE, but V > 1 or folds specified. Cross-fitting will not be performed.")
+    }
+    nuis$V <- 1
+    nuis$folds <- rep(1, n)
+  }
+  if(!is.null(nuis$folds)) {
+    nuis$folds <- as.numeric(factor(nuis$folds))
+    nuis$V <- length(unique(nuis$folds))
+  }
+  if(nuis$cross.fit & is.null(nuis$folds)) {
+    
+    event.0 <- which(event == 0)
+    event.1 <- which(event == 1)
+    folds.0 <- sample(rep(1:nuis$V, length = length(event.0)))
+    folds.1 <- sample(rep(1:nuis$V, length = length(event.1)))
+    nuis$folds <- rep(NA, n)
+    nuis$folds[event.0] <- folds.0
+    nuis$folds[event.1] <- folds.1
+  }
+  
+  if(is.null(nuis$verbose)) nuis$verbose <- FALSE
+  
+  contrasts <- unique(tolower(contrasts))
+  contrasts <- contrasts[contrasts %in% c("surv.diff", "surv.ratio", "risk.ratio", "nnt")]
+  .check.input(time=time, 
+               event=event, 
+               treat=treat, 
+               W_event = W,
+               W_cens = W,
+               fit.times=fit.times, 
+               fit.treat=fit.treat, 
+               nuisance.options=nuis, 
+               conf.band=conf.band, 
+               conf.level=conf.level, 
+               contrasts=contrasts, 
+               verbose=verbose)
+  
+  if(any(fit.times < 0)) {
+    fit.times <- fit.times[fit.times > 0]
+    message("fit.times < 0 removed.")
+  }
+  #if(any(fit.times == 0)) fit.times <- fit.times[fit.times > 0]
+  #if(any(fit.times > max(time[event == 1]))) {
+  #  fit.times <- fit.times[fit.times <= max(time[event == 1])]
+  #  message("fit.times > max(time[event == 1]) removed.")
+  #}
+  
+  if(is.null(nuis$eval.times)){
+    nuis$eval.times <- fit.times #sort(unique(c(0,time[time > 0 & time <= max(fit.times)], max(fit.times))))
+  }
+  
+  k <- length(fit.times)
+  
+  W <- as.data.frame(W)
+  
+  surv.df <- data.frame()
+  result <- list(fit.times=fit.times, fit.treat=fit.treat, surv.df=surv.df)
+  
+  #### ESTIMATE PROPENSITY ####
+  
+  if(is.null(nuis$prop.pred)) {
+    if(verbose) message("Estimating propensities...")
+    nuis$prop.pred <- rep(NA, n)
+    if(nuis$V > 1) {
+      if(nuis$save.nuis.fits) result$prop.fits <- vector(mode='list',length=nuis$V)
+      for(v in 1:nuis$V) {
+        if(verbose) message(paste("Fold ", v, "..."))
+        train <- nuis$fold != v
+        test <- nuis$fold == v
+        
+        prop.fit <- .estimate.propensity(A=treat[train], 
+                                         W=W[train,,drop=FALSE], 
+                                         newW=W[test,, drop=FALSE], 
+                                         SL.library=nuis$prop.SL.library, 
+                                         fit.treat=fit.treat, 
+                                         prop.trunc=nuis$prop.trunc, 
+                                         save.fit = nuis$save.nuis.fits,
+                                         verbose = nuis$verbose)
+        
+        nuis$prop.pred[test] <- prop.fit$prop.pred
+        if(nuis$save.nuis.fits) result$prop.fits[[v]] <- prop.fit$prop.fit
+      }
+    } else {
+      prop.fit <- .estimate.propensity(A=treat, 
+                                       W=W, 
+                                       newW=W, 
+                                       SL.library=nuis$prop.SL.library, 
+                                       fit.treat=fit.treat, 
+                                       prop.trunc=nuis$prop.trunc, 
+                                       save.fit = nuis$save.nuis.fits, 
+                                       verbose = FALSE)
+      nuis$prop.pred <- prop.fit$prop.pred
+      if(nuis$save.nuis.fits) {
+        result$prop.fit <- prop.fit$prop.fit
+      }
+    }
+  }
+  
+  #### ESTIMATE CONDITIONAL SURVIVALS ####
+  
+  if((1 %in% fit.treat & (is.null(nuis$event.pred.1) | is.null(nuis$cens.pred.1))) | (0 %in% fit.treat & (is.null(nuis$event.pred.0) | is.null(nuis$cens.pred.0)))) {
+    if(verbose) message("Estimating conditional survivals...")
+    nuis$w <- vector(length=0)
+    nuis$id <- vector(length=0)
+    if(0 %in% fit.treat & is.null(nuis$event.pred.0)) {
+      do.event.pred.0 <- TRUE
+      nuis$event.pred.0 <- matrix(NA, nrow=0, ncol=k)
+    } else do.event.pred.0 <- FALSE
+    if(1 %in% fit.treat & is.null(nuis$event.pred.1)) {
+      do.event.pred.1 <- TRUE
+      nuis$event.pred.1 <- matrix(NA, nrow=0, ncol=k)
+    } else do.event.pred.1 <- FALSE
+    if(0 %in% fit.treat & is.null(nuis$cens.pred.0)) {
+      do.cens.pred.0 <- TRUE
+      nuis$cens.pred.0 <- matrix(NA, nrow=0, ncol=k)
+    } else do.cens.pred.0 <- FALSE
+    if(1 %in% fit.treat & is.null(nuis$cens.pred.1)) {
+      do.cens.pred.1 <- TRUE
+      nuis$cens.pred.1 <- matrix(NA, nrow=0, ncol=k)
+    } else{do.cens.pred.1 <- FALSE}
+    if(nuis$V > 1) {
+      if(nuis$save.nuis.fits) result$surv.fits <- vector(mode='list',length=nuis$V)
+      nuis$event.coef <- nuis$cens.coef <- list()
+      for(v in 1:nuis$V) {
+        if(verbose) message(paste("Fold ", v, "..."))
+        train <- which(nuis$fold != v)
+        test <- which(nuis$fold == v)
+        
+        ### We MUST fit nuisance parameters on the training fold
+        ### This code fits N | X to training data and outputs augmented training dataset
+        dat_train<- as.data.frame(cbind("id"= id, 
+                                        "Y"=time, 
+                                        "DeltaY"=event, 
+                                        "N"=time_N, 
+                                        'DeltaN'=event_N, 
+                                        "A"=treat, 
+                                        'admin_t' = admin_t, W))[train,]
+        dat_test<- as.data.frame(cbind("id" = id, "Y"=time, "DeltaY"=event, "N"=time_N, 'DeltaN'=event_N, "A"=treat, 'admin_t' = admin_t, W))[test,]
+        
+        augment_dataset <- function(i, df, id, A, Y, DeltaY, W, N, DeltaN, admin_t, FN, information_level){
+          
+          survest_1 <- FN$survest_1
+          survest_0 <- FN$survest_0
+          
+          row_i <- df[i, ]
+          
+          Ai = row_i[[A]]
+          N0 <- row_i[[N]]  # censoring time
+          admin_t_tmp <- row_i[[admin_t]]
+          
+          N_support <- c(sort(unique(df[[N]][df[[DeltaN]]==1 & df[[A]]==Ai])), admin_t_tmp)
+          
+          # Case 1: N observed
+          if (row_i[[DeltaN]] == 1 | row_i[[N]]==admin_t_tmp) {
+            if(is.na(W) | is.null(W)){
+              return(
+                data.frame(
+                  id     = row_i[[id]],
+                  N      = row_i[[N]],
+                  DeltaN = row_i[[DeltaN]],
+                  Y      = row_i[[Y]],
+                  DeltaY = row_i[[DeltaY]],
+                  A      = row_i[[A]],
+                  X      = NA,
+                  admin_t = admin_t_tmp,
+                  w      = 1
+                ))
+            }else{
+              return(
+                data.frame(
+                  id     = row_i[[id]],
+                  N      = row_i[[N]],
+                  DeltaN = row_i[[DeltaN]],
+                  Y      = row_i[[Y]],
+                  DeltaY = row_i[[DeltaY]],
+                  A      = row_i[[A]],
+                  X      = row_i[[W]],
+                  admin_t = admin_t_tmp,
+                  w      = 1
+                ))
+            }
+          }
+          
+          # Case 2: N censored → redistribution
+          
+          # plausible N values
+          N_grid <- N_support[N_support > N0]
+          
+          if (length(N_grid) == 0){
+            return(data.frame(
+              id     = row_i[[id]],
+              N      = admin_t_tmp,
+              DeltaN = 0,
+              Y      = row_i[[Y]],
+              DeltaY = row_i[[DeltaY]],
+              A      = row_i[[A]],
+              X      = row_i[[W]],
+              admin_t = admin_t_tmp,
+              w      = 1
+            ))
+          }
+          
+          # conditional survival from fitted model
+          # FN_survfun returns S_N(t | a, x)
+          if(information_level == 2){
+            if(Ai==0){
+              S_vals <- as.vector(survest_0(
+                t=c(N0, N_grid), 
+                x=row_i %>% dplyr::select(all_of(W))
+              ))
+            }else{
+              S_vals <- as.vector(survest_1(
+                t=c(N0, N_grid), 
+                x=row_i %>% dplyr::select(all_of(W))
+              ))
+            }
+          }else{
+            if(Ai==0){
+              S_vals <- as.vector(survest_0(
+                c(N0, N_grid)
+              ))
+            }else{
+              S_vals <- as.vector(survest_1(
+                c(N0, N_grid)
+              ))
+            }
+          }
+          
+          # compute conditional probabilities
+          S_N0 <- S_vals[1]
+          S_grid <- S_vals
+          
+          # P(N = n | N > N0)
+          w_raw <- -diff(c(S_grid)) / S_N0
+          w_raw[w_raw < 0] <- 0
+          w <- w_raw / sum(w_raw)
+          
+          if(is.na(W) | is.null(W)){
+            data.frame(
+              id     = row_i[[id]],
+              N      = N_grid,
+              DeltaN = as.numeric(N_grid < admin_t_tmp),
+              Y      = row_i[[Y]],
+              DeltaY = row_i[[DeltaY]],
+              A      = row_i[[A]],
+              X      = NA,
+              admin_t = admin_t_tmp,
+              w      = w
+            ) %>% filter(w>0)
+          }else{
+            data.frame(
+              id     = row_i[[id]],
+              N      = N_grid,
+              DeltaN = as.numeric(N_grid < admin_t_tmp),
+              Y      = row_i[[Y]],
+              DeltaY = row_i[[DeltaY]],
+              A      = row_i[[A]],
+              X      = row_i[[W]],
+              admin_t = admin_t_tmp,
+              w      = w
+            ) %>% filter(w>0)
+          }
+        }
+        
+        if(information_level==0){
+          if(verbose){
+            message("Level 0 -- fitting (unconditional) censored covariate distribution N")
+            warning("Global KM estimator relies on completely at random censoring. Level 1 may be preferable from standpoint of assumptions")
+          }
+          
+        dat_train=dat_train %>%
+            mutate(
+              DeltaN = case_when(
+                N >= admin_t ~ 1,
+                .default = DeltaN),
+              N = case_when(
+                N > admin_t ~ admin_t,
+                .default = N)
+            )
+          
+        KM<-survfit(Surv(N, DeltaN)~1, data=dat_train)
+        
+        FN<-list()
+        FN$survest_1 <- stepfun(KM$time, c(1, KM$surv))
+        FN$survest_0 <- stepfun(KM$time, c(1, KM$surv))
+        
+        }else if(information_level==1){
+          if(verbose){
+            message("Level 1 -- fitting (treatment-conditional) censored covariate distribution N | A")
+            message("Using treatment-stratified KM estimator")
+          }
+          
+          dat_train=dat_train %>%
+            mutate(
+              DeltaN = case_when(
+                N >= admin_t ~ 1,
+                .default = DeltaN),
+              N = case_when(
+                N > admin_t ~ admin_t,
+                .default = N)
+            )
+          
+        KM<-survfit(Surv(N, DeltaN)~A, data=dat_train)
+        
+        FN<-list()
+        FN$survest_0 <- stepfun(KM[1]$time, c(1, KM[1]$surv))
+        FN$survest_1 <- stepfun(KM[2]$time, c(1, KM[2]$surv))
+        
+        }else if(information_level==2){
+          if(verbose){
+            message("Level 2 -- fitting (treatment and covariate-conditional) censored covariate distribution N | A, X")
+            message("Using survSuperLearner ensemble")
+          }
+          
+          FN<-estimate_conditional_survival_N(dat=dat_train, 
+                                              N_name="N", 
+                                              DeltaN_name = "DeltaN", 
+                                              A_name="A", 
+                                              X_names = colnames(W), 
+                                              admin_t = admin_t, 
+                                              event.SL.library = nuis$event.SL.library,
+                                              cens.SL.library = nuis$cens.SL.library,
+                                              survSL.control = nuis$survSL.control,
+                                              survSL.cvControl = nuis$survSL.cvControl,
+                                              verbose=FALSE)
+          
+        }else{
+          if(verbose){
+            message("Level 3 -- fitting (full observed-data-conditional) censored covariate distribution N | A, X, Delta_Y, tilde{Y}")
+            message("NOTE: This approach will require iterative nuisance fitting")
+            message("Step 1: estimate prior model -- fitting (treatment and covariate-conditional) censored covariate distribution N | A, X")
+          }
+          
+          FN<-estimate_conditional_survival_N(dat=dat_train, 
+                                              N_name="N", 
+                                              DeltaN_name = "DeltaN", 
+                                              A_name="A", 
+                                              X_names = colnames(W), 
+                                              admin_t = admin_t, 
+                                              event.SL.library = nuis$event.SL.library,
+                                              cens.SL.library = nuis$cens.SL.library,
+                                              survSL.control = nuis$survSL.control,
+                                              survSL.cvControl = nuis$survSL.cvControl,
+                                              verbose=FALSE)
+          
+        }
+        
+        if(information_level %in% c(0,1,2)){
+          message(paste0("Information Level=", information_level, ". Conducting dataset augmentation."))
+          if(nuis$verbose){
+          message("Augmenting training dataset using redistribute-to-the-right via N|X")
+          pb <- progress_bar$new(total = nrow(dat_train),
+                                 format = "[:bar] :percent ETA: :eta")
+        }
+          aug_train_list <- vector(mode="list", length=nrow(dat_train))
+          for(i in 1:nrow(dat_train)){
+          aug_train_list[[i]]<-augment_dataset(i, 
+                                               df=dat_train, 
+                                               id="id",
+                                               Y="Y", 
+                                               DeltaY='DeltaY', 
+                                               A="A", 
+                                               N="N", 
+                                               W='X', 
+                                               DeltaN='DeltaN', 
+                                               admin_t='admin_t',
+                                               FN = FN,
+                                               information_level = information_level)
+          if(nuis$verbose){pb$tick()}
+        }
+        
+          ### Create augmented training data
+          aug_train <- do.call(rbind, aug_train_list)
+          rm(aug_train_list)
+        
+          if(nuis$verbose){
+          message("Augmenting test dataset using redistribute-to-the-right via N|X")
+          pb <- progress_bar$new(total = nrow(dat_test),
+                                 format = "[:bar] :percent ETA: :eta")}
+        
+          aug_test_list <- vector(mode="list", length=nrow(dat_test))
+          for(i in 1:nrow(dat_test)){
+          aug_test_list[[i]]<-augment_dataset(i, 
+                                              df=dat_test, 
+                                              id = 'id',
+                                              Y="Y", 
+                                              DeltaY='DeltaY', 
+                                              A="A", 
+                                              N="N", 
+                                              W='X', 
+                                              DeltaN='DeltaN', 
+                                              admin_t='admin_t',
+                                              FN = FN,
+                                              information_level = information_level)
+          if(nuis$verbose){pb$tick()}
+        }
+        
+          ### Create augmented training data
+          aug_test <- do.call(rbind, aug_test_list)
+          rm(aug_test_list)
+        
+          message("Fit conditional survival distributions Y|N,A,X")
+          surv.fit <- .estimate.conditional.survival.2(Y=aug_train[["Y"]], 
+                                                     Delta=aug_train[["DeltaY"]], 
+                                                     A=aug_train[["A"]], 
+                                                     W_event=aug_train %>% dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                     W_cens=aug_train %>% dplyr::select(colnames(W)),
+                                                     newW_event = aug_test %>% dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                     newW_cens = aug_test %>% dplyr::select(colnames(W)),
+                                                     event.SL.library=nuis$event.SL.library, 
+                                                     fit.times=fit.times, 
+                                                     fit.treat=fit.treat, 
+                                                     cens.SL.library=nuis$cens.SL.library, 
+                                                     survSL.control=nuis$survSL.control, 
+                                                     survSL.cvControl = nuis$survSL.cvControl, 
+                                                     cens.trunc=nuis$cens.trunc, 
+                                                     save.fit = nuis$save.nuis.fits, 
+                                                     verbose = nuis$verbose,
+                                                     obsWeights = aug_train$w, 
+                                                     id = aug_train$id)
+        }
+        
+        if(information_level == 3){
+          
+          ########
+          # REMINAING KEY ISSUE
+          # NEED TO AUGMENT TEST DATA TOO
+          augment_dataset_unweighted <- function(i, df, N_support, id, A, Y, DeltaY, W, N, DeltaN, admin_t){
+            
+            row_i <- df[i, ]
+            
+            Ai = row_i[[A]]
+            N0 <- row_i[[N]]  # censoring time
+            admin_t_tmp <- row_i[[admin_t]]
+            
+            #N_support <- c(sort(unique(df[[N]][df[[DeltaN]]==1])), admin_t_tmp)
+            
+            # Case 1: N observed
+            if (row_i[[DeltaN]] == 1 | row_i[[N]]==admin_t_tmp) {
+              if(is.na(W) | is.null(W)){
+                return(
+                  data.frame(
+                    id     = row_i[[id]],
+                    N      = row_i[[N]],
+                    DeltaN = row_i[[DeltaN]],
+                    Y      = row_i[[Y]],
+                    DeltaY = row_i[[DeltaY]],
+                    A      = row_i[[A]],
+                    X      = NA,
+                    admin_t = admin_t_tmp
+                  ))
+              }else{
+                return(
+                  data.frame(
+                    id     = row_i[[id]],
+                    N      = row_i[[N]],
+                    DeltaN = row_i[[DeltaN]],
+                    Y      = row_i[[Y]],
+                    DeltaY = row_i[[DeltaY]],
+                    A      = row_i[[A]],
+                    X      = row_i[[W]],
+                    admin_t = admin_t_tmp
+                  ))
+              }
+            }
+            
+            # Case 2: N censored → redistribution
+            
+            # plausible N values
+            N_grid <- N_support[N_support > N0]
+            
+            if (length(N_grid) == 0){
+              return(data.frame(
+                id     = row_i[[id]],
+                N      = admin_t_tmp,
+                DeltaN = 0,
+                Y      = row_i[[Y]],
+                DeltaY = row_i[[DeltaY]],
+                A      = row_i[[A]],
+                X      = row_i[[W]],
+                admin_t = admin_t_tmp
+              ))
+            }else{
+              return(data.frame(
+                id     = row_i[[id]],
+                N      = N_grid,
+                DeltaN = c(rep(1, length(N_grid)-1), 0),
+                Y      = row_i[[Y]],
+                DeltaY = row_i[[DeltaY]],
+                A      = row_i[[A]],
+                X      = row_i[[W]],
+                admin_t = admin_t_tmp
+              ))
+            }
+          }
+          
+          # Augment training data without weights
+          aug_train<-lapply(1:nrow(dat_train), FUN=function(x){
+            augment_dataset_unweighted(i=x, 
+                                       df=dat_train, 
+                                       N_support = sort(unique(c(time_N[event_N==1 & time_N <= admin_t[train[x]]], admin_t[train[x]]))),
+                                       id='id', 
+                                       A="A", 
+                                       Y="Y", 
+                                       DeltaY='DeltaY', 
+                                       W="X", 
+                                       N="N", 
+                                       DeltaN='DeltaN', 
+                                       admin_t='admin_t')
+          })
+          aug_train <- do.call(rbind, aug_train)
+          
+          # Augment training data without weights
+          aug_test<-lapply(1:nrow(dat_test), FUN=function(x){
+            augment_dataset_unweighted(i=x, 
+                                       df=dat_test, 
+                                       N_support = sort(unique(c(time_N[event_N==1 & time_N <= admin_t[test[x]]], admin_t[test[x]]))),
+                                       id='id', 
+                                       A="A", 
+                                       Y="Y", 
+                                       DeltaY='DeltaY', 
+                                       W="X", 
+                                       N="N", 
+                                       DeltaN='DeltaN', 
+                                       admin_t='admin_t')
+          })
+          aug_test <- do.call(rbind, aug_test)
+          
+          #Augment test data without weights
+          
+          message("Fit preliminary conditional survival distributions Y|N,A,X with DeltaN==1")
+          
+          indx_full <- which(dat_train$DeltaN==1 | dat_train$N==admin_t[train])
+          
+          # RETURN HERE
+          surv.fit <- .estimate.conditional.survival.2(Y=dat_train[["Y"]][indx_full], 
+                                                       Delta=dat_train[["DeltaY"]][indx_full], 
+                                                       A=dat_train[["A"]][indx_full], 
+                                                       W_event=dat_train %>% 
+                                                         dplyr::select(c("N", "DeltaN", colnames(W))) %>%
+                                                         slice(indx_full), 
+                                                       W_cens=dat_train %>% 
+                                                         dplyr::select(colnames(W)) %>% 
+                                                         slice(indx_full),
+                                                       newW_event = aug_train %>% 
+                                                         dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                       newW_cens = aug_train %>% 
+                                                         dplyr::select(colnames(W)),
+                                                       event.SL.library=nuis$event.SL.library, 
+                                                       fit.times=sort(unique(dat_train[["Y"]])), 
+                                                       fit.treat=fit.treat, 
+                                                       cens.SL.library=c('survSL.km'), 
+                                                       survSL.control=nuis$survSL.control, 
+                                                       survSL.cvControl = nuis$survSL.cvControl, 
+                                                       cens.trunc=nuis$cens.trunc, 
+                                                       save.fit = nuis$save.nuis.fits, 
+                                                       verbose = nuis$verbose, 
+                                                       obsWeights = rep(1, length(indx_full)),
+                                                       id = 1:length(indx_full))
+        
+        message("Iterative nuisance updating -- (i) conditional distn Y|N,A,X and (ii) weights")
+        calc_weights <- function(i, aug_df, df){
+            
+            indx <- which(aug_df$id==i)
+            slice <- aug_df %>% slice(indx)
+          
+            if(nrow(slice)==0 | nrow(slice)==1){
+              
+              return(slice %>% mutate(w=1))
+              
+            }else{
+              
+              if(all(slice[["A"]]==1)){
+                SN <- FN$survest_1(t=c(df[["N"]][df$id==i], slice$N), 
+                                   x = slice %>% 
+                                     dplyr::select("X") %>% 
+                                     distinct()) #Conditional survival function predictions
+                PN = -diff(SN) # Failure probabilities at each slice
+                
+                #what if the value of Y is not in fit.times?
+                # Essential that all times >0 are included in fit.times
+                Yind <- which(surv.fit$fit.times==unique(slice$Y))
+                
+                if(is.na(Yind) | length(Yind)==0){
+                  w<-1/nrow(slice)
+                }else if(unique(slice$DeltaY)==1){
+                  SY <- surv.fit$event.pred.1[indx,(Yind-1):Yind] #row corresponds to id, columns correspond to (T-1, T), hence, P(T=t) = P(T > t-1) - P(T > t) = S(t-1) - S(t)
+                  LY<-apply(SY, MARGIN=1, FUN=function(x){x[1]-x[2]}) # This is the likelihood contribution when can event occurs
+                  w <- LY * PN / sum(LY * PN)
+                }else{
+                  LY <- surv.fit$event.pred.1[indx,Yind]  #This is the likelihood contribution under censoring
+                  w <- LY * PN / sum(LY * PN)
+                }
+                return(slice %>% mutate(w = w))
+              }else{
+                SN <- FN$survest_0(t=c(df[['N']][df$id==i], slice$N), 
+                                   x = slice %>% 
+                                     dplyr::select("X") %>% 
+                                     distinct())
+                PN = -diff(SN)
+                
+                Yind <- which(surv.fit$fit.times==unique(slice$Y))
+                
+                #what if the value of Y is not in fit.times?
+                # Essential that all times >0 are included in fit.times
+                Yind <- which(surv.fit$fit.times==unique(slice$Y))
+                
+                if(is.na(Yind) | length(Yind)==0){
+                  w<-1/nrow(slice)
+                }else if(unique(slice$DeltaY)==1){
+                  SY <- surv.fit$event.pred.0[indx,(Yind-1):Yind] #row corresponds to id, columns correspond to (T-1, T), hence, P(T=t) = P(T > t-1) - P(T > t) = S(t-1) - S(t)
+                  LY<-apply(SY, MARGIN=1, FUN=function(x){x[1]-x[2]}) # This is the likelihood contribution when can event occurs
+                  w <- LY * PN / sum(LY * PN)
+                }else{
+                  LY <- surv.fit$event.pred.0[indx,Yind]  #This is the likelihood contribution under censoring
+                  w <- LY * PN / sum(LY * PN)
+                }
+                
+                w <- LY * PN / sum(LY * PN)
+                
+                return(slice %>% mutate(w = w))
+                
+              }
+              
+            }
+            
+          }
+        
+        for(j in 1:maxiter){
+          message(paste0("--Iteration ", j))
+        
+          message(paste0("\tWeight estimation"))
+          out<-vector(mode="list", length=length(dat_train$id))
+          iter=0
+          for(i in dat_train$id){
+            iter=iter+1
+            out[[iter]]<-calc_weights(i=i, aug_df = aug_train, df = dat_train)
+          }
+        
+          aug_train <- do.call(rbind, out) %>%
+            filter(w>0)
+          rm(out)
+        
+          message(paste0("\tUpdating distn Y|N,A,X via weighted estimation"))
+          surv.fit <- .estimate.conditional.survival.2(Y=aug_train[["Y"]], 
+                                                     Delta=aug_train[["DeltaY"]], 
+                                                     A=aug_train[["A"]], 
+                                                     W_event=aug_train %>% 
+                                                       dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                     W_cens=aug_train %>% 
+                                                       dplyr::select(colnames(W)),
+                                                     newW_event = aug_train %>% 
+                                                       dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                     newW_cens = aug_train %>% 
+                                                       dplyr::select(colnames(W)),
+                                                     event.SL.library=nuis$event.SL.library, 
+                                                     fit.times=fit.times, 
+                                                     fit.treat=fit.treat, 
+                                                     cens.SL.library=nuis$cens.SL.library, 
+                                                     survSL.control=nuis$survSL.control, 
+                                                     survSL.cvControl = nuis$survSL.cvControl, 
+                                                     cens.trunc=nuis$cens.trunc, 
+                                                     save.fit = nuis$save.nuis.fits, 
+                                                     verbose = nuis$verbose, 
+                                                     obsWeights = aug_train$w,
+                                                     id = aug_train$id)
+        
+        }
+        
+        message("Final calculation on test data")
+        surv.fit <- .estimate.conditional.survival.2(Y=aug_train[["Y"]], 
+                                                     Delta=aug_train[["DeltaY"]], 
+                                                     A=aug_train[["A"]], 
+                                                     W_event=aug_train %>% 
+                                                       dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                     W_cens=aug_train %>% 
+                                                       dplyr::select(colnames(W)),
+                                                     newW_event = aug_test %>% 
+                                                       dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                     newW_cens = aug_test %>% 
+                                                       dplyr::select(colnames(W)),
+                                                     event.SL.library=nuis$event.SL.library, 
+                                                     fit.times=fit.times, 
+                                                     fit.treat=fit.treat, 
+                                                     cens.SL.library=nuis$cens.SL.library, 
+                                                     survSL.control=nuis$survSL.control, 
+                                                     survSL.cvControl = nuis$survSL.cvControl, 
+                                                     cens.trunc=nuis$cens.trunc, 
+                                                     save.fit = nuis$save.nuis.fits, 
+                                                     verbose = nuis$verbose, 
+                                                     obsWeights = aug_train$w,
+                                                     id = aug_train$id)
+        
+        out<-vector(mode="list", length=length(dat_test$id))
+        iter=0
+        for(i in dat_test$id){
+          iter=iter+1
+          out[[iter]]<-calc_weights(i=i, aug_df = aug_test, df = dat_test)
+        }
+        aug_test <- do.call(rbind, out)
+        rm(out)
+        
+        }
+          
+        if(do.event.pred.0) nuis$event.pred.0 <- rbind(nuis$event.pred.0, surv.fit$event.pred.0)
+        if(do.event.pred.1) nuis$event.pred.1 <- rbind(nuis$event.pred.1, surv.fit$event.pred.1)
+        if(do.cens.pred.0) nuis$cens.pred.0 <- rbind(nuis$cens.pred.0, surv.fit$cens.pred.0)
+        if(do.cens.pred.1) nuis$cens.pred.1 <- rbind(nuis$cens.pred.1, surv.fit$cens.pred.1)
+        nuis$w <- c(nuis$w, aug_test$w)
+        nuis$id <- c(nuis$id, aug_test$id)
+        if(nuis$save.nuis.fits) result$surv.fits[[v]] <- surv.fit$surv.fit
+        nuis$event.coef[[v]] <- surv.fit$event.coef
+        nuis$cens.coef[[v]] <- surv.fit$cens.coef
+      }
+    } else {
+      
+      if(nuis$save.nuis.fits) result$surv.fits <- vector(mode='list',length=nuis$V)
+      nuis$event.coef <- nuis$cens.coef <- list()
+      
+      ### We MUST fit nuisance parameters on the training fold
+      ### This code fits N | X to training data and outputs augmented training dataset
+      dat<- as.data.frame(cbind("id"= id, 
+                                "Y"=time, 
+                                "DeltaY"=event, 
+                                "N"=time_N, 
+                                'DeltaN'=event_N, 
+                                "A"=treat, 
+                                'admin_t'=admin_t,
+                                W))
+      
+      if(nuis$verbose){message("Fitting censored covariate distribution N|X")}
+      
+      FN<-estimate_conditional_survival_N(dat=dat, 
+                                          N_name="N", 
+                                          DeltaN_name = "DeltaN", 
+                                          A_name="A", 
+                                          X_names = colnames(W), 
+                                          admin_t = admin_t, 
+                                          event.SL.library = nuis$event.SL.library,
+                                          cens.SL.library = nuis$cens.SL.library,
+                                          survSL.control = nuis$survSL.control,
+                                          survSL.cvControl = nuis$survSL.cvControl,
+                                          verbose=FALSE)
+      
+      augment_dataset <- function(i, df, id, A, Y, DeltaY, W, N, DeltaN, admin_t, FN){
+        
+        survest_1 <- FN$survest_1
+        survest_0 <- FN$survest_0
+        
+        row_i <- df[i, ]
+        
+        Ai = row_i[[A]]
+        N0 <- row_i[[N]]  # censoring time
+        admin_t_tmp <- row_i[[admin_t]]
+        
+        N_support <- c(sort(unique(df[[N]][df[[DeltaN]]==1 & df[[A]]==Ai])), admin_t_tmp)
+        
+        # Case 1: N observed
+        if (row_i[[DeltaN]] == 1 | row_i[[N]]==admin_t_tmp) {
+          if(is.na(W) | is.null(W)){
+            return(
+              data.frame(
+                id     = row_i[[id]],
+                N      = row_i[[N]],
+                DeltaN = row_i[[DeltaN]],
+                Y      = row_i[[Y]],
+                DeltaY = row_i[[DeltaY]],
+                A      = row_i[[A]],
+                X      = NA,
+                admin_t = admin_t_tmp,
+                w      = 1
+              ))
+          }else{
+            return(
+              data.frame(
+                id     = row_i[[id]],
+                N      = row_i[[N]],
+                DeltaN = row_i[[DeltaN]],
+                Y      = row_i[[Y]],
+                DeltaY = row_i[[DeltaY]],
+                A      = row_i[[A]],
+                X      = row_i[[W]],
+                admin_t = admin_t_tmp,
+                w      = 1
+              ))
+          }
+        }
+        
+        # Case 2: N censored → redistribution
+        
+        # plausible N values
+        N_grid <- N_support[N_support > N0]
+        
+        if (length(N_grid) == 0){
+          return(data.frame(
+            id     = row_i[[id]],
+            N      = admin_t_tmp,
+            DeltaN = 0,
+            Y      = row_i[[Y]],
+            DeltaY = row_i[[DeltaY]],
+            A      = row_i[[A]],
+            X      = row_i[[W]],
+            admin_t = admin_t_tmp,
+            w      = 1
+          ))
+        }
+        
+        # conditional survival from fitted model
+        # FN_survfun returns S_N(t | a, x)
+        if(Ai==0){
+          S_vals <- as.vector(survest_0(
+            t=c(N0, N_grid), 
+            x=row_i %>% dplyr::select(all_of(W))
+          ))
+        }else{
+          S_vals <- as.vector(survest_1(
+            t=c(N0, N_grid), 
+            x=row_i %>% dplyr::select(all_of(W))
+          ))
+        }
+        
+        # compute conditional probabilities
+        S_N0 <- S_vals[1]
+        S_grid <- S_vals
+        
+        # P(N = n | N > N0)
+        w_raw <- -diff(c(S_grid)) / S_N0
+        w_raw[w_raw < 0] <- 0
+        w <- w_raw / sum(w_raw)
+        
+        if(is.na(W) | is.null(W)){
+          data.frame(
+            id     = row_i[[id]],
+            N      = N_grid,
+            DeltaN = as.numeric(N_grid < admin_t_tmp),
+            Y      = row_i[[Y]],
+            DeltaY = row_i[[DeltaY]],
+            A      = row_i[[A]],
+            X      = NA,
+            admin_t = admin_t_tmp,
+            w      = w
+          ) %>% filter(w>0)
+        }else{
+          data.frame(
+            id     = row_i[[id]],
+            N      = N_grid,
+            DeltaN = as.numeric(N_grid < admin_t_tmp),
+            Y      = row_i[[Y]],
+            DeltaY = row_i[[DeltaY]],
+            A      = row_i[[A]],
+            X      = row_i[[W]],
+            admin_t = admin_t_tmp,
+            w      = w
+          ) %>% filter(w>0)
+        }
+      }
+      
+      if(nuis$verbose){
+        message("Augmenting training dataset using redistribute-to-the-right via N|X")
+        pb <- progress_bar$new(total = nrow(dat),
+                               format = "[:bar] :percent ETA: :eta")
+      }
+      aug_list <- vector(mode="list", length=nrow(dat))
+      for(i in 1:nrow(dat)){
+        aug_train_list[[i]]<-augment_dataset(i, 
+                                             df=dat, 
+                                             id="id",
+                                             Y="Y", 
+                                             DeltaY='DeltaY', 
+                                             A="A", 
+                                             N="N", 
+                                             W='X', 
+                                             DeltaN='DeltaN', 
+                                             admin_t='admin_t',
+                                             FN = FN)
+        if(nuis$verbose){pb$tick()}
+      }
+      
+      ### Create augmented training data
+      aug <- do.call(rbind, aug_list)
+      rm(aug_list)
+      
+      message("Fit conditional survival distributions Y|N,X")
+      surv.fit <- .estimate.conditional.survival.2(Y=aug[["Y"]], 
+                                                   Delta=aug[["DeltaY"]], 
+                                                   A=aug[["A"]], 
+                                                   W_event=aug %>% dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                   W_cens=aug %>% dplyr::select(colnames(W)),
+                                                   newW_event = aug %>% dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                   newW_cens = aug %>% dplyr::select(colnames(W)),
+                                                   event.SL.library=nuis$event.SL.library, 
+                                                   fit.times=nuis$eval.times, 
+                                                   fit.treat=fit.treat, 
+                                                   cens.SL.library=nuis$cens.SL.library, 
+                                                   survSL.control=nuis$survSL.control, 
+                                                   survSL.cvControl = nuis$survSL.cvControl, 
+                                                   cens.trunc=nuis$cens.trunc, 
+                                                   save.fit = nuis$save.nuis.fits, 
+                                                   verbose = nuis$verbose,
+                                                   obsWeights = aug$w, 
+                                                   id = aug$id)
+      
+      if(do.event.pred.0) nuis$event.pred.0 <- surv.fit$event.pred.0
+      if(do.event.pred.1) nuis$event.pred.1 <- surv.fit$event.pred.1
+      if(do.cens.pred.0) nuis$cens.pred.0 <- surv.fit$cens.pred.0
+      if(do.cens.pred.1) nuis$cens.pred.1 <- surv.fit$cens.pred.1
+      nuis$w <- c(nuis$w, aug_test$w)
+      nuis$id <- c(nuis$id, aug_test$id)
+      if(nuis$save.nuis.fits) result$surv.fits <- surv.fit$surv.fit
+      nuis$event.coef <- surv.fit$event.coef
+      nuis$cens.coef <- surv.fit$cens.coef
+    }
+  }
+  
+  #### ESTIMATE CF SURVIVALS ####
+  if(verbose) message("Computing counterfactual survivals...")
+  if(0 %in% fit.treat) {
+    
+    if(verbose){message("Computating Survival Probability for A=0")}
+    
+    surv.0 <- .get.survival.2(Y=time[nuis$id], 
+                              Delta=event[nuis$id], 
+                              A=1-treat[nuis$id], 
+                              fit.times=fit.times, 
+                              eval.times=nuis$eval.times, 
+                              S.hats=nuis$event.pred.0, 
+                              G.hats=nuis$cens.pred.0, 
+                              g.hats=1-nuis$prop.pred[nuis$id], 
+                              obsWeights = nuis$w, 
+                              id = nuis$id, 
+                              isotonize = TRUE)
+    
+    surv.df.0 <- data.frame(time=unique(c(0,fit.times)), trt=0, surv=c(1, surv.0$surv.iso))
+    result$IF.vals.0 <- surv.0$IF.vals
+    
+    q.01 <- quantile(time[event == 1 & treat == 0], .01)#min(fit.times[surv.0$surv <= .99])
+    
+    q.99.inds <- !is.na(surv.0$surv.iso)
+    q.99.inds[q.99.inds &  surv.0$surv.iso < .01] <- FALSE
+    q.99 <- max(fit.times[q.99.inds])
+    min.obs.time <- min(time[event == 1 & treat == 0])
+    
+    c.int <- .surv.confints(fit.times, 
+                            surv.0$surv, 
+                            surv.0$IF.vals, 
+                            conf.band = conf.band, 
+                            band.end.pts = c(q.01, q.99), 
+                            conf.level=conf.level)
+    surv.df.0$se <- c(0,c.int$res$se)
+    surv.df.0$se.logit <- c(0,c.int$res$se.logit)
+    surv.df.0$ptwise.lower <- c(1,c.int$res$ptwise.lower)
+    surv.df.0$ptwise.upper <- c(1,c.int$res$ptwise.upper)
+    surv.df.0$ptwise.logit.lower <- c(1,c.int$res$ptwise.logit.lower)
+    surv.df.0$ptwise.logit.upper <- c(1,c.int$res$ptwise.logit.upper)
+    
+    #surv.df.0$se[surv.df.0$time < min.obs.time & surv.df.0$time > 0] <- surv.df.0$se.logit[surv.df.0$time < min.obs.time & surv.df.0$time > 0] <- surv.df.0$ptwise.lower[surv.df.0$time < min.obs.time & surv.df.0$time > 0] <- surv.df.0$ptwise.upper[surv.df.0$time < min.obs.time & surv.df.0$time > 0] <- NA
+    
+    if(conf.band) {
+      surv.df.0$unif.ew.lower <- c(1,c.int$res$unif.ew.lower)
+      surv.df.0$unif.ew.upper <- c(1,c.int$res$unif.ew.upper)
+      result$surv.0.unif.ew.quant <- c.int$unif.ew.quant
+      result$surv.0.ew.sim.maxes <- c.int$ew.sim.maxes
+      
+      surv.df.0$unif.logit.lower <- c(1,c.int$res$unif.logit.lower)
+      surv.df.0$unif.logit.upper <- c(1,c.int$res$unif.logit.upper)
+      result$surv.0.unif.logit.quant <- c.int$unif.logit.quant
+      result$surv.0.logit.sim.maxes <- c.int$logit.sim.maxes
+    }
+    result$surv.df <- rbind(result$surv.df, surv.df.0)
+  }
+  
+  if(1 %in% fit.treat) {
+    
+    if(verbose){message("Computating Survival Probability for A=1")}
+    
+    surv.1 <- .get.survival.2(Y=time[nuis$id], 
+                              Delta=event[nuis$id], 
+                              A=treat[nuis$id], 
+                              fit.times=fit.times, 
+                              eval.times=nuis$eval.times, 
+                              S.hats=nuis$event.pred.1, 
+                              G.hats=nuis$cens.pred.1, 
+                              g.hats=nuis$prop.pred[nuis$id], 
+                              obsWeights = nuis$w, 
+                              id = nuis$id, 
+                              isotonize = TRUE)
+    
+    surv.df.1 <- data.frame(time=unique(c(0,fit.times)), trt=1, surv=c(1, surv.1$surv.iso))
+    result$IF.vals.1 <- surv.1$IF.vals
+    
+    q.01 <- quantile(time[event == 1 & treat == 1], .01)#min(fit.times[surv.1$surv <= .99])
+    q.99 <- max(fit.times[surv.1$surv.iso >= .01])
+    min.obs.time <- min(time[event == 1 & treat == 1])
+    
+    c.int <- .surv.confints(fit.times, 
+                            surv.1$surv, 
+                            surv.1$IF.vals, 
+                            conf.band = conf.band, 
+                            band.end.pts = c(q.01, q.99), 
+                            conf.level=conf.level)
+    surv.df.1$se <- c(0,c.int$res$se)
+    surv.df.1$se.logit <- c(0,c.int$res$se.logit)
+    surv.df.1$ptwise.lower <- c(1,c.int$res$ptwise.lower)
+    surv.df.1$ptwise.upper <- c(1,c.int$res$ptwise.upper)
+    surv.df.1$ptwise.logit.lower <- c(1,c.int$res$ptwise.logit.lower)
+    surv.df.1$ptwise.logit.upper <- c(1,c.int$res$ptwise.logit.upper)
+    
+    #surv.df.1$se[surv.df.1$time < min.obs.time & surv.df.1$time > 0] <- surv.df.1$se.logit[surv.df.1$time < min.obs.time & surv.df.1$time > 0] <- surv.df.1$ptwise.lower[surv.df.1$time < min.obs.time & surv.df.1$time > 0] <- surv.df.1$ptwise.upper[surv.df.1$time < min.obs.time & surv.df.1$time > 0] <- NA
+    
+    if(conf.band) {
+      surv.df.1$unif.ew.lower <- c(1,c.int$res$unif.ew.lower)
+      surv.df.1$unif.ew.upper <- c(1,c.int$res$unif.ew.upper)
+      result$surv.1.unif.ew.quant <- c.int$unif.ew.quant
+      result$surv.1.ew.sim.maxes <- c.int$ew.sim.maxes
+      
+      surv.df.1$unif.logit.lower <- c(1,c.int$res$unif.logit.lower)
+      surv.df.1$unif.logit.upper <- c(1,c.int$res$unif.logit.upper)
+      result$surv.1.unif.logit.quant <- c.int$unif.logit.quant
+      result$surv.1.logit.sim.maxes <- c.int$logit.sim.maxes
+    }
+    result$surv.df <- rbind(result$surv.df, surv.df.1)
+  }
+  
+  #### ESTIMATE CF CONTRASTS ####
+  if(identical(sort(fit.treat), c(0,1))) {
+    q.01 <- quantile(time[event == 1], .01)#min(fit.times[surv.0$surv <= .99])
+    q.99 <- max(fit.times[surv.0$surv.iso >= .01 | surv.1$surv.iso >= .01])
+  }
+  
+  if('surv.diff' %in% contrasts & identical(sort(fit.treat), c(0,1))) {
+    if(verbose) message("Computing survival differences...")
+    surv.diff <- .surv.difference(fit.times=fit.times, surv.0=surv.0$surv, IF.vals.0 = surv.0$IF.vals, surv.1=surv.1$surv, IF.vals.1 = surv.1$IF.vals, conf.band=conf.band, band.end.pts=c(q.01, q.99), conf.level=conf.level)
+    result <- c(result, surv.diff)
+  }
+  
+  if('surv.ratio' %in% contrasts & identical(sort(fit.treat), c(0,1))) {
+    if(verbose) message("Computing survival ratios...")
+    surv.ratio <- .surv.ratio(fit.times=fit.times, surv.0=surv.0$surv, IF.vals.0 = surv.0$IF.vals, surv.1=surv.1$surv, IF.vals.1 = surv.1$IF.vals, conf.band=conf.band, band.end.pts=c(q.01, q.99),conf.level=conf.level)
+    result <- c(result, surv.ratio)
+  }
+  
+  if('risk.ratio' %in% contrasts  & identical(sort(fit.treat), c(0,1))) {
+    if(verbose) message("Computing risk ratios...")
+    risk.ratio <- .risk.ratio(fit.times=fit.times, surv.0=surv.0$surv, IF.vals.0 = surv.0$IF.vals, surv.1=surv.1$surv, IF.vals.1 = surv.1$IF.vals, conf.band=conf.band, band.end.pts=c(q.01, q.99), conf.level=conf.level)
+    result <- c(result, risk.ratio)
+  }
+  
+  if('nnt' %in% contrasts  & identical(sort(fit.treat), c(0,1))) {
+    if(verbose) message("Computing number needed to treat...")
+    nnt <- .nnt(fit.times=fit.times, surv.0=surv.0$surv, IF.vals.0 = surv.0$IF.vals, surv.1=surv.1$surv, IF.vals.1 = surv.1$IF.vals, conf.band=conf.band, band.end.pts=c(q.01, q.99), conf.level=conf.level)
+    result <- c(result, nnt)
+  }
+  
+  result$data <- data.frame(time, event, treat)
+  result$nuisance <- nuis
+  
+  return(result)
+}
+
 CFsurvival2 <- function(time, 
                         event,
                         time_N,
