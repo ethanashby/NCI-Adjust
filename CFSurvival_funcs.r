@@ -57,47 +57,47 @@ CFsurvival3 <- function(time,
                         contrasts = c("risk.ratio"), 
                         verbose=TRUE,
                         maxiter = 3) {
-  
-    time = data$Y;
-    event = data$DeltaY;
-    time_N = data$N1;
-    event_N = data$DeltaN1;
-    information_level = 3;
-    admin_t = round(365*L$admin_date);
-    treat = data$A;
-    W = data.frame(X=data$X); 
-    id = 1:nrow(data);
-    fit.times = sort(unique(data$Y));
-    fit.treat = c(0,1);
-    nuisance.options = CFsurvival.nuisance.options(
-      cross.fit = TRUE,
-      V = 5,
-      folds = NULL,
-      eval.times = NULL,
-      event.SL.library = c("survSL.km", 
-                           "survSL.coxph", 
-                           "survSL.expreg"),
-      event.pred.0 = NULL,
-      event.pred.1 = NULL,
-      cens.SL.library = c("survSL.km", 
-                          "survSL.coxph", 
-                          "survSL.expreg"),
-      cens.trunc = 0,
-      cens.pred.0 = NULL,
-      cens.pred.1 = NULL,
-      survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
-      survSL.cvControl = list(V = 5),
-      save.nuis.fits = FALSE,
-      prop.SL.library = NULL,
-      prop.trunc = 0,
-      prop.pred = prop.fit,
-      verbose = TRUE
-    );
-    conf.band = FALSE;
-    conf.level = 0.95; 
-    contrasts = c("risk.ratio"); 
-    verbose = TRUE;
-    maxiter=3
+  # time = to_fit_1$Y;
+  # event = to_fit_1$DeltaY;
+  # treat = to_fit_1$A;
+  # W = W;
+  # time_N = to_fit_1$N1;
+  # event_N = to_fit_1$DeltaN1;
+  # information_level = 2;
+  # admin_t = to_fit_1$admin_t;
+  # id = to_fit_1$ptid;
+  # fit.times = sort(unique(to_fit_1$Y[to_fit_1$Y>0])); 
+  # fit.treat = c(0,1);
+  # nuisance.options = CFsurvival.nuisance.options(
+  #   cross.fit = TRUE,
+  #   V = 5,
+  #   folds = NULL,
+  #   eval.times = NULL,
+  #   event.SL.library = lapply(c("survSL.km", 
+  #                               "survSL.coxph", 
+  #                               "survSL.gam"), function(alg)
+  #                                 c(alg, "survscreen.glmnet", "All")),
+  #   event.pred.0 = NULL,
+  #   event.pred.1 = NULL,
+  #   cens.SL.library = lapply(c("survSL.km", 
+  #                              "survSL.coxph", 
+  #                              "survSL.gam"), function(alg)
+  #                                c(alg, "survscreen.glmnet", "All")),
+  #   cens.trunc = 0,
+  #   cens.pred.0 = NULL,
+  #   cens.pred.1 = NULL,
+  #   survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+  #   survSL.cvControl = list(V = 5),
+  #   save.nuis.fits = FALSE,
+  #   prop.SL.library = NULL,
+  #   prop.trunc = 0,
+  #   prop.pred = prop.fit,
+  #   verbose = TRUE
+  # );
+  # conf.band = FALSE;
+  # conf.level = 0.95;
+  # contrasts = c("risk.ratio");
+  # verbose = TRUE
   
   if(!(information_level %in% c(0,1,2,3))){
     stop("information_level must be one of 0, 1, 2, or 3")
@@ -112,7 +112,7 @@ CFsurvival3 <- function(time,
   
   if(length(unique(admin_t))==1){
     admin_t = rep(admin_t, n)
-  }else if(length(unique(admin_t))==n){
+  }else if(length(admin_t)==n){
     admin_t=admin_t
   }else{
     stop("admin_t must be either a n x 1 vector or a scalar")
@@ -133,6 +133,7 @@ CFsurvival3 <- function(time,
     nuis$V <- 1
     nuis$folds <- rep(1, n)
   }
+  
   if(!is.null(nuis$folds)) {
     nuis$folds <- as.numeric(factor(nuis$folds))
     nuis$V <- length(unique(nuis$folds))
@@ -152,6 +153,7 @@ CFsurvival3 <- function(time,
   
   contrasts <- unique(tolower(contrasts))
   contrasts <- contrasts[contrasts %in% c("surv.diff", "surv.ratio", "risk.ratio", "nnt")]
+  
   .check.input(time=time, 
                event=event, 
                treat=treat, 
@@ -256,16 +258,24 @@ CFsurvival3 <- function(time,
         train <- which(nuis$fold != v)
         test <- which(nuis$fold == v)
         
-        ### We MUST fit nuisance parameters on the training fold
-        ### This code fits N | X to training data and outputs augmented training dataset
+        ### All nuisance parameters must be fit to the training fold
         dat_train<- as.data.frame(cbind("id"= id, 
                                         "Y"=time, 
                                         "DeltaY"=event, 
                                         "N"=time_N, 
                                         'DeltaN'=event_N, 
                                         "A"=treat, 
-                                        'admin_t' = admin_t, W))[train,]
-        dat_test<- as.data.frame(cbind("id" = id, "Y"=time, "DeltaY"=event, "N"=time_N, 'DeltaN'=event_N, "A"=treat, 'admin_t' = admin_t, W))[test,]
+                                        'admin_t' = admin_t, 
+                                        W))[train,]
+        
+        dat_test<- as.data.frame(cbind("id" = id, 
+                                       "Y"=time, 
+                                       "DeltaY"=event, 
+                                       "N"=time_N, 
+                                       'DeltaN'=event_N, 
+                                       "A"=treat, 
+                                       'admin_t' = admin_t, 
+                                       W))[test,]
         
         augment_dataset <- function(i, df, id, A, Y, DeltaY, W, N, DeltaN, admin_t, FN, information_level){
           
@@ -282,7 +292,7 @@ CFsurvival3 <- function(time,
           
           # Case 1: N observed
           if (row_i[[DeltaN]] == 1 | row_i[[N]]==admin_t_tmp) {
-            if(is.na(W) | is.null(W)){
+            if(all(is.na(W) | is.null(W))){
               return(
                 data.frame(
                   id     = row_i[[id]],
@@ -297,17 +307,16 @@ CFsurvival3 <- function(time,
                 ))
             }else{
               return(
-                data.frame(
+                suppressMessages(bind_cols(data.frame(
                   id     = row_i[[id]],
                   N      = row_i[[N]],
                   DeltaN = row_i[[DeltaN]],
                   Y      = row_i[[Y]],
                   DeltaY = row_i[[DeltaY]],
                   A      = row_i[[A]],
-                  X      = row_i[[W]],
                   admin_t = admin_t_tmp,
                   w      = 1
-                ))
+                ), row_i %>% select(all_of(W)), .name_repair="minimal")))
             }
           }
           
@@ -317,17 +326,16 @@ CFsurvival3 <- function(time,
           N_grid <- N_support[N_support > N0]
           
           if (length(N_grid) == 0){
-            return(data.frame(
+            return(suppressMessages(bind_cols(data.frame(
               id     = row_i[[id]],
               N      = admin_t_tmp,
               DeltaN = 0,
               Y      = row_i[[Y]],
               DeltaY = row_i[[DeltaY]],
               A      = row_i[[A]],
-              X      = row_i[[W]],
               admin_t = admin_t_tmp,
               w      = 1
-            ))
+            ), row_i %>% select(all_of(W)), .name_repair="minimal")))
           }
           
           # conditional survival from fitted model
@@ -365,7 +373,7 @@ CFsurvival3 <- function(time,
           w_raw[w_raw < 0] <- 0
           w <- w_raw / sum(w_raw)
           
-          if(is.na(W) | is.null(W)){
+          if(all(is.na(W) | is.null(W))){
             data.frame(
               id     = row_i[[id]],
               N      = N_grid,
@@ -378,17 +386,16 @@ CFsurvival3 <- function(time,
               w      = w
             ) %>% filter(w>0)
           }else{
-            data.frame(
+            suppressMessages(bind_cols(data.frame(
               id     = row_i[[id]],
               N      = N_grid,
               DeltaN = as.numeric(N_grid < admin_t_tmp),
               Y      = row_i[[Y]],
               DeltaY = row_i[[DeltaY]],
               A      = row_i[[A]],
-              X      = row_i[[W]],
               admin_t = admin_t_tmp,
               w      = w
-            ) %>% filter(w>0)
+            ) %>% filter(w>0), row_i %>% select(all_of(W)), .name_repair="minimal"))
           }
         }
         
@@ -453,12 +460,11 @@ CFsurvival3 <- function(time,
                                               survSL.control = nuis$survSL.control,
                                               survSL.cvControl = nuis$survSL.cvControl,
                                               verbose=FALSE)
-          
         }else{
           if(verbose){
-            message("Level 3 -- fitting (full observed-data-conditional) censored covariate distribution N | A, X, Delta_Y, tilde{Y}")
-            message("NOTE: This approach will require iterative nuisance fitting")
-            message("Step 1: estimate prior model -- fitting (treatment and covariate-conditional) censored covariate distribution N | A, X")
+            message("\tLevel 3 -- fitting (full observed-data-conditional) censored covariate distribution N | A, X, Delta_Y, tilde{Y}")
+            message("\tNOTE: This approach will require iterative nuisance fitting")
+            message("\tStep 1: estimate prior model -- fitting (treatment and covariate-conditional) censored covariate distribution N | A, X")
           }
           
           FN<-estimate_conditional_survival_N(dat=dat_train, 
@@ -491,7 +497,7 @@ CFsurvival3 <- function(time,
                                                DeltaY='DeltaY', 
                                                A="A", 
                                                N="N", 
-                                               W='X', 
+                                               W=colnames(W), 
                                                DeltaN='DeltaN', 
                                                admin_t='admin_t',
                                                FN = FN,
@@ -517,7 +523,7 @@ CFsurvival3 <- function(time,
                                               DeltaY='DeltaY', 
                                               A="A", 
                                               N="N", 
-                                              W='X', 
+                                              W=colnames(W), 
                                               DeltaN='DeltaN', 
                                               admin_t='admin_t',
                                               FN = FN,
@@ -552,10 +558,17 @@ CFsurvival3 <- function(time,
         
         if(information_level == 3){
           
-          ########
-          # REMINAING KEY ISSUE
-          # NEED TO AUGMENT TEST DATA TOO
-          augment_dataset_unweighted <- function(i, df, N_support, id, A, Y, DeltaY, W, N, DeltaN, admin_t){
+          augment_dataset_unweighted <- function(i, 
+                                                 df, 
+                                                 N_support, 
+                                                 id, 
+                                                 A, 
+                                                 Y, 
+                                                 DeltaY,
+                                                 W, 
+                                                 N, 
+                                                 DeltaN, 
+                                                 admin_t){
             
             row_i <- df[i, ]
             
@@ -567,7 +580,7 @@ CFsurvival3 <- function(time,
             
             # Case 1: N observed
             if (row_i[[DeltaN]] == 1 | row_i[[N]]==admin_t_tmp) {
-              if(is.na(W) | is.null(W)){
+              if(all(is.na(W) | is.null(W))){
                 return(
                   data.frame(
                     id     = row_i[[id]],
@@ -581,16 +594,15 @@ CFsurvival3 <- function(time,
                   ))
               }else{
                 return(
-                  data.frame(
+                  bind_cols(data.frame(
                     id     = row_i[[id]],
                     N      = row_i[[N]],
                     DeltaN = row_i[[DeltaN]],
                     Y      = row_i[[Y]],
                     DeltaY = row_i[[DeltaY]],
                     A      = row_i[[A]],
-                    X      = row_i[[W]],
                     admin_t = admin_t_tmp
-                  ))
+                  ), row_i %>% select(all_of(W))))
               }
             }
             
@@ -600,27 +612,25 @@ CFsurvival3 <- function(time,
             N_grid <- N_support[N_support > N0]
             
             if (length(N_grid) == 0){
-              return(data.frame(
+              return(bind_cols(data.frame(
                 id     = row_i[[id]],
                 N      = admin_t_tmp,
                 DeltaN = 0,
                 Y      = row_i[[Y]],
                 DeltaY = row_i[[DeltaY]],
                 A      = row_i[[A]],
-                X      = row_i[[W]],
                 admin_t = admin_t_tmp
-              ))
+              ), row_i %>% select(all_of(W))))
             }else{
-              return(data.frame(
+              return(bind_cols(data.frame(
                 id     = row_i[[id]],
                 N      = N_grid,
                 DeltaN = c(rep(1, length(N_grid)-1), 0),
                 Y      = row_i[[Y]],
                 DeltaY = row_i[[DeltaY]],
                 A      = row_i[[A]],
-                X      = row_i[[W]],
                 admin_t = admin_t_tmp
-              ))
+              ), row_i[[N]]))
             }
           }
           
@@ -633,14 +643,14 @@ CFsurvival3 <- function(time,
                                        A="A", 
                                        Y="Y", 
                                        DeltaY='DeltaY', 
-                                       W="X", 
+                                       W=colnames(W), 
                                        N="N", 
                                        DeltaN='DeltaN', 
                                        admin_t='admin_t')
           })
           aug_train <- do.call(rbind, aug_train)
           
-          # Augment training data without weights
+          # Augment test data without weights
           aug_test<-lapply(1:nrow(dat_test), FUN=function(x){
             augment_dataset_unweighted(i=x, 
                                        df=dat_test, 
@@ -649,20 +659,27 @@ CFsurvival3 <- function(time,
                                        A="A", 
                                        Y="Y", 
                                        DeltaY='DeltaY', 
-                                       W="X", 
+                                       W=colnames(W), 
                                        N="N", 
                                        DeltaN='DeltaN', 
                                        admin_t='admin_t')
           })
           aug_test <- do.call(rbind, aug_test)
           
+          message(paste0("Aug train dimension (", nrow(aug_train), "x", ncol(aug_train), ")"))
+          message(paste0("Aug test dimension (", nrow(aug_test), "x", ncol(aug_test), ")"))
+          
           #Augment test data without weights
           
-          message("Fit preliminary conditional survival distributions Y|N,A,X with DeltaN==1")
+          message("\tFit preliminary conditional survival distributions Y|N,A,X with DeltaN==1")
           
           indx_full <- which(dat_train$DeltaN==1 | dat_train$N==admin_t[train])
+          # time grid for weight calculation
+          grid <- round(seq(min(unique(dat_train[["Y"]])), 
+                            max(unique(dat_train[["Y"]])), 
+                            length=200), 
+                        0)
           
-          # RETURN HERE
           surv.fit <- .estimate.conditional.survival.2(Y=dat_train[["Y"]][indx_full], 
                                                        Delta=dat_train[["DeltaY"]][indx_full], 
                                                        A=dat_train[["A"]][indx_full], 
@@ -677,19 +694,19 @@ CFsurvival3 <- function(time,
                                                        newW_cens = aug_train %>% 
                                                          dplyr::select(colnames(W)),
                                                        event.SL.library=nuis$event.SL.library, 
-                                                       fit.times=sort(unique(dat_train[["Y"]])), 
+                                                       fit.times=grid, 
                                                        fit.treat=fit.treat, 
                                                        cens.SL.library=c('survSL.km'), 
                                                        survSL.control=nuis$survSL.control, 
                                                        survSL.cvControl = nuis$survSL.cvControl, 
                                                        cens.trunc=nuis$cens.trunc, 
                                                        save.fit = nuis$save.nuis.fits, 
-                                                       verbose = nuis$verbose, 
+                                                       verbose = FALSE, 
                                                        obsWeights = rep(1, length(indx_full)),
                                                        id = 1:length(indx_full))
         
-        message("Iterative nuisance updating -- (i) conditional distn Y|N,A,X and (ii) weights")
-        calc_weights <- function(i, aug_df, df){
+        message("\tIterative nuisance updating -- (i) conditional distn Y|N,A,X and (ii) weights")
+        calc_weights_old <- function(i, aug_df, df){
             
             indx <- which(aug_df$id==i)
             slice <- aug_df %>% slice(indx)
@@ -709,6 +726,10 @@ CFsurvival3 <- function(time,
                 
                 #what if the value of Y is not in fit.times?
                 # Essential that all times >0 are included in fit.times
+                
+                #surv.fit$event.pred.1[indx,]
+                
+                #fit <- stepfun(grid, c(1, surv.fit$event.pred.1[1,]))
                 Yind <- which(surv.fit$fit.times==unique(slice$Y))
                 
                 if(is.na(Yind) | length(Yind)==0){
@@ -754,22 +775,93 @@ CFsurvival3 <- function(time,
               
             }
             
+        }
+        
+        calc_weights <- function(i, aug_df, df, grid){
+          
+          # i=26
+          # aug_df = aug_test
+          # df = dat_test
+          # grid=grid
+          
+          indx <- which(aug_df$id==i)
+          slice <- aug_df %>% slice(indx)
+          
+          if(nrow(slice)==0 | nrow(slice)==1){
+            
+            return(slice %>% mutate(w=1))
+            
+          }else{
+            
+            if(all(slice[["A"]]==1)){
+              
+              SN <- FN$survest_1(t=c(df[["N"]][df$id==i], slice$N), 
+                                 x = slice %>% 
+                                   dplyr::select("X") %>% 
+                                   distinct()) #Conditional survival function predictions
+              PN = -diff(SN) # Failure probabilities at each slice
+              
+              Y_tmp <- unique(slice[["Y"]])
+              Delta_tmp <- unique(slice[["DeltaY"]])
+              LY <- rep(NA, length(indx))
+              for(i in 1:length(indx)){
+                
+                fit <- stepfun(grid, c(1, surv.fit$event.pred.1[indx[i],]))
+                if(Delta_tmp==1){
+                  LY[i] = fit(Y_tmp) - fit(Y_tmp-1)
+                }else{
+                  LY[i] = fit(Y_tmp)
+                }
+              }
+              
+              w <- LY * PN / sum(LY * PN)
+              return(slice %>% mutate(w = w))
+            }else{
+              SN <- FN$survest_0(t=c(df[["N"]][df$id==i], slice$N), 
+                                 x = slice %>% 
+                                   dplyr::select("X") %>% 
+                                   distinct()) #Conditional survival function predictions
+              PN = -diff(SN) # Failure probabilities at each slice
+              
+              Y_tmp <- unique(slice[["Y"]])
+              Delta_tmp <- unique(slice[["DeltaY"]])
+              LY <- rep(NA, length(indx))
+              for(i in 1:length(indx)){
+                
+                fit <- stepfun(grid, c(1, surv.fit$event.pred.0[indx[i],]))
+                if(Delta_tmp==1){
+                  LY[i] = fit(Y_tmp) - fit(Y_tmp-1)
+                }else{
+                  LY[i] = fit(Y_tmp)
+                }
+              }
+              
+              w <- LY * PN / sum(LY * PN)
+              return(slice %>% mutate(w = w))
+              
+            }
+            
           }
+          
+        }
         
         for(j in 1:maxiter){
-          message(paste0("--Iteration ", j))
+          message(paste0("\t--Iteration ", j))
         
           message(paste0("\tWeight estimation"))
           out<-vector(mode="list", length=length(dat_train$id))
           iter=0
           for(i in dat_train$id){
             iter=iter+1
-            out[[iter]]<-calc_weights(i=i, aug_df = aug_train, df = dat_train)
+            out[[iter]]<-calc_weights(i=i, aug_df = aug_train, df = dat_train, grid=grid)
           }
         
           aug_train <- do.call(rbind, out) %>%
             filter(w>0)
+          
           rm(out)
+          gc()
+          rm(surv.fit)
         
           message(paste0("\tUpdating distn Y|N,A,X via weighted estimation"))
           surv.fit <- .estimate.conditional.survival.2(Y=aug_train[["Y"]], 
@@ -783,30 +875,34 @@ CFsurvival3 <- function(time,
                                                        dplyr::select(c("N", "DeltaN", colnames(W))), 
                                                      newW_cens = aug_train %>% 
                                                        dplyr::select(colnames(W)),
-                                                     event.SL.library=nuis$event.SL.library, 
-                                                     fit.times=fit.times, 
+                                                     fit.times=grid, 
                                                      fit.treat=fit.treat, 
-                                                     cens.SL.library=nuis$cens.SL.library, 
+                                                     event.SL.library=nuis$event.SL.library, 
+                                                     cens.SL.library=c("survSL.km"), 
                                                      survSL.control=nuis$survSL.control, 
                                                      survSL.cvControl = nuis$survSL.cvControl, 
                                                      cens.trunc=nuis$cens.trunc, 
                                                      save.fit = nuis$save.nuis.fits, 
-                                                     verbose = nuis$verbose, 
+                                                     verbose = FALSE, 
                                                      obsWeights = aug_train$w,
                                                      id = aug_train$id)
-        
+        gc()
         }
         
-        message("Final calculation on test data")
+        message("\tFinal calculation on test data")
         surv.fit <- .estimate.conditional.survival.2(Y=aug_train[["Y"]], 
                                                      Delta=aug_train[["DeltaY"]], 
                                                      A=aug_train[["A"]], 
                                                      W_event=aug_train %>% 
-                                                       dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                       dplyr::select(c("N", 
+                                                                       "DeltaN", 
+                                                                       colnames(W))), 
                                                      W_cens=aug_train %>% 
                                                        dplyr::select(colnames(W)),
                                                      newW_event = aug_test %>% 
-                                                       dplyr::select(c("N", "DeltaN", colnames(W))), 
+                                                       dplyr::select(c("N", 
+                                                                       "DeltaN", 
+                                                                       colnames(W))), 
                                                      newW_cens = aug_test %>% 
                                                        dplyr::select(colnames(W)),
                                                      event.SL.library=nuis$event.SL.library, 
@@ -825,10 +921,11 @@ CFsurvival3 <- function(time,
         iter=0
         for(i in dat_test$id){
           iter=iter+1
-          out[[iter]]<-calc_weights(i=i, aug_df = aug_test, df = dat_test)
+          out[[iter]]<-calc_weights(i=i, aug_df = aug_test, df = dat_test, grid=fit.times)
         }
         aug_test <- do.call(rbind, out)
         rm(out)
+        gc()
         
         }
           
@@ -841,6 +938,10 @@ CFsurvival3 <- function(time,
         if(nuis$save.nuis.fits) result$surv.fits[[v]] <- surv.fit$surv.fit
         nuis$event.coef[[v]] <- surv.fit$event.coef
         nuis$cens.coef[[v]] <- surv.fit$cens.coef
+        
+        rm(surv.fit)
+        gc()
+        if(verbose){message(paste("Fold ", v, "Complete"))}
       }
     } else {
       
@@ -887,7 +988,7 @@ CFsurvival3 <- function(time,
         
         # Case 1: N observed
         if (row_i[[DeltaN]] == 1 | row_i[[N]]==admin_t_tmp) {
-          if(is.na(W) | is.null(W)){
+          if(all(is.na(W) | is.null(W))){
             return(
               data.frame(
                 id     = row_i[[id]],
@@ -902,17 +1003,17 @@ CFsurvival3 <- function(time,
               ))
           }else{
             return(
-              data.frame(
+              bind_cols(data.frame(
                 id     = row_i[[id]],
                 N      = row_i[[N]],
                 DeltaN = row_i[[DeltaN]],
                 Y      = row_i[[Y]],
                 DeltaY = row_i[[DeltaY]],
                 A      = row_i[[A]],
-                X      = row_i[[W]],
                 admin_t = admin_t_tmp,
                 w      = 1
-              ))
+              ), row_i %>% select(all_of(W)))
+            )
           }
         }
         
@@ -922,17 +1023,16 @@ CFsurvival3 <- function(time,
         N_grid <- N_support[N_support > N0]
         
         if (length(N_grid) == 0){
-          return(data.frame(
+          return(bind_cols(data.frame(
             id     = row_i[[id]],
             N      = admin_t_tmp,
             DeltaN = 0,
             Y      = row_i[[Y]],
             DeltaY = row_i[[DeltaY]],
             A      = row_i[[A]],
-            X      = row_i[[W]],
             admin_t = admin_t_tmp,
             w      = 1
-          ))
+          ), row_i %>% select(all_of(W))))
         }
         
         # conditional survival from fitted model
@@ -958,7 +1058,7 @@ CFsurvival3 <- function(time,
         w_raw[w_raw < 0] <- 0
         w <- w_raw / sum(w_raw)
         
-        if(is.na(W) | is.null(W)){
+        if(all(is.na(W) | is.null(W))){
           data.frame(
             id     = row_i[[id]],
             N      = N_grid,
@@ -971,17 +1071,16 @@ CFsurvival3 <- function(time,
             w      = w
           ) %>% filter(w>0)
         }else{
-          data.frame(
+          bind_cols(data.frame(
             id     = row_i[[id]],
             N      = N_grid,
             DeltaN = as.numeric(N_grid < admin_t_tmp),
             Y      = row_i[[Y]],
             DeltaY = row_i[[DeltaY]],
             A      = row_i[[A]],
-            X      = row_i[[W]],
             admin_t = admin_t_tmp,
             w      = w
-          ) %>% filter(w>0)
+          ) %>% filter(w>0), row_i %>% select(all_of(W)))
         }
       }
       
@@ -1101,7 +1200,7 @@ CFsurvival3 <- function(time,
   
   if(1 %in% fit.treat) {
     
-    if(verbose){message("Computating Survival Probability for A=1")}
+    if(verbose){message("Computing Survival Probability for A=1")}
     
     surv.1 <- .get.survival.2(Y=time[nuis$id], 
                               Delta=event[nuis$id], 
@@ -1328,6 +1427,7 @@ CFsurvival2 <- function(time,
   #### ESTIMATE CONDITIONAL SURVIVALS ####
   
   if((1 %in% fit.treat & (is.null(nuis$event.pred.1) | is.null(nuis$cens.pred.1))) | (0 %in% fit.treat & (is.null(nuis$event.pred.0) | is.null(nuis$cens.pred.0)))) {
+    
     if(verbose) message("Estimating conditional survivals...")
     nuis$w <- vector(length=0)
     nuis$id <- vector(length=0)
@@ -1389,7 +1489,7 @@ CFsurvival2 <- function(time,
           
           # Case 1: N observed
           if (row_i[[DeltaN]] == 1 | row_i[[N]]==admin_t_tmp) {
-            if(is.na(W) | is.null(W)){
+            if(all(is.na(W) | is.null(W))){
               return(
                 data.frame(
                   id     = row_i[[id]],
@@ -1404,17 +1504,16 @@ CFsurvival2 <- function(time,
                 ))
             }else{
               return(
-                data.frame(
+                bind_cols(data.frame(
                   id     = row_i[[id]],
                   N      = row_i[[N]],
                   DeltaN = row_i[[DeltaN]],
                   Y      = row_i[[Y]],
                   DeltaY = row_i[[DeltaY]],
                   A      = row_i[[A]],
-                  X      = row_i[[W]],
                   admin_t = admin_t_tmp,
                   w      = 1
-                ))
+                ), row_i %>% select(all_of(W))))
             }
           }
           
@@ -1424,17 +1523,16 @@ CFsurvival2 <- function(time,
           N_grid <- N_support[N_support > N0]
           
           if (length(N_grid) == 0){
-            return(data.frame(
+            return(bind_cols(data.frame(
               id     = row_i[[id]],
               N      = admin_t_tmp,
               DeltaN = 0,
               Y      = row_i[[Y]],
               DeltaY = row_i[[DeltaY]],
               A      = row_i[[A]],
-              X      = row_i[[W]],
               admin_t = admin_t_tmp,
               w      = 1
-            ))
+            ), row_i %>% select(all_of(W))))
           }
           
           # conditional survival from fitted model
@@ -1460,7 +1558,7 @@ CFsurvival2 <- function(time,
           w_raw[w_raw < 0] <- 0
           w <- w_raw / sum(w_raw)
           
-          if(is.na(W) | is.null(W)){
+          if(all(is.na(W) | is.null(W))){
             data.frame(
               id     = row_i[[id]],
               N      = N_grid,
@@ -1473,17 +1571,16 @@ CFsurvival2 <- function(time,
               w      = w
             ) %>% filter(w>0)
           }else{
-            data.frame(
+            bind_cols(data.frame(
               id     = row_i[[id]],
               N      = N_grid,
               DeltaN = as.numeric(N_grid < admin_t_tmp),
               Y      = row_i[[Y]],
               DeltaY = row_i[[DeltaY]],
               A      = row_i[[A]],
-              X      = row_i[[W]],
               admin_t = admin_t_tmp,
               w      = w
-            ) %>% filter(w>0)
+            ) %>% filter(w>0), row_i %>% select(all_of(W)))
           }
         }
         
@@ -1613,7 +1710,7 @@ CFsurvival2 <- function(time,
         
         # Case 1: N observed
         if (row_i[[DeltaN]] == 1 | row_i[[N]]==admin_t_tmp) {
-          if(is.na(W) | is.null(W)){
+          if(all(is.na(W) | is.null(W))){
             return(
               data.frame(
                 id     = row_i[[id]],
@@ -1628,17 +1725,17 @@ CFsurvival2 <- function(time,
               ))
           }else{
             return(
-              data.frame(
+              bind_cols(data.frame(
                 id     = row_i[[id]],
                 N      = row_i[[N]],
                 DeltaN = row_i[[DeltaN]],
                 Y      = row_i[[Y]],
                 DeltaY = row_i[[DeltaY]],
                 A      = row_i[[A]],
-                X      = row_i[[W]],
                 admin_t = admin_t_tmp,
                 w      = 1
-              ))
+              ), row_i %>% select(all_of(W)))
+            )
           }
         }
         
@@ -1648,17 +1745,18 @@ CFsurvival2 <- function(time,
         N_grid <- N_support[N_support > N0]
         
         if (length(N_grid) == 0){
-          return(data.frame(
+          return(
+            bind_cols(data.frame(
             id     = row_i[[id]],
             N      = admin_t_tmp,
             DeltaN = 0,
             Y      = row_i[[Y]],
             DeltaY = row_i[[DeltaY]],
             A      = row_i[[A]],
-            X      = row_i[[W]],
             admin_t = admin_t_tmp,
             w      = 1
-          ))
+          ), row_i %>% select(all_of(W)))
+        )
         }
         
         # conditional survival from fitted model
@@ -1684,7 +1782,7 @@ CFsurvival2 <- function(time,
         w_raw[w_raw < 0] <- 0
         w <- w_raw / sum(w_raw)
         
-        if(is.na(W) | is.null(W)){
+        if(all(is.na(W) | is.null(W))){
           data.frame(
             id     = row_i[[id]],
             N      = N_grid,
@@ -1697,6 +1795,7 @@ CFsurvival2 <- function(time,
             w      = w
           ) %>% filter(w>0)
         }else{
+          bind_cols(
           data.frame(
             id     = row_i[[id]],
             N      = N_grid,
@@ -1704,10 +1803,9 @@ CFsurvival2 <- function(time,
             Y      = row_i[[Y]],
             DeltaY = row_i[[DeltaY]],
             A      = row_i[[A]],
-            X      = row_i[[W]],
             admin_t = admin_t_tmp,
             w      = w
-          ) %>% filter(w>0)
+          ) %>% filter(w>0), row_i %>% select(all_of(W)))
         }
       }
       
@@ -2228,8 +2326,8 @@ CFsurvival.nuisance.options <- function(cross.fit = TRUE, V = ifelse(cross.fit, 
   # A=aug_train[["A"]];
   # W_event=aug_train %>% dplyr::select(c("N", "DeltaN", colnames(W)));
   # W_cens=aug_train %>% dplyr::select(colnames(W));
-  # newW_event = aug_test %>% dplyr::select(c("N", "DeltaN", colnames(W))) %>% slice(1:10);
-  # newW_cens = aug_test %>% dplyr::select(colnames(W)) %>% slice(1:10);
+  # newW_event = aug_train %>% dplyr::select(c("N", "DeltaN", colnames(W))) #%>% slice(1:10);
+  # newW_cens = aug_train %>% dplyr::select(colnames(W)) #%>% slice(1:10);
   # event.SL.library=nuis$event.SL.library;
   # fit.times=nuis$eval.times;
   # fit.treat=fit.treat;
@@ -2422,15 +2520,6 @@ estimate_conditional_survival_N <- function(dat,
   
   req <- require(survSuperLearner)
   
-  # dat=data; 
-  # N_name="N1";
-  # DeltaN_name = "DeltaN1";
-  # A_name="A";
-  # X_names = "X";
-  # admin_t = round(365*2.5); 
-  # event.SL.library = c("survSL.km", "survSL.coxph", "survSL.expreg");
-  # cens.SL.library = c("survSL.km", "survSL.coxph", "survSL.expreg")
-  
   if(is.null(X_names)){
     
     X_names = "X"
@@ -2460,7 +2549,7 @@ estimate_conditional_survival_N <- function(dat,
   
   if(all(c(0,1) %in% fit.treat)){
     
-    FN_1 <- survSuperLearner(time = dat[['N']][dat[[A_name]]==1], 
+    FN_1 <- survSuperLearner::survSuperLearner(time = dat[['N']][dat[[A_name]]==1], 
                              event = dat[['DeltaN']][dat[[A_name]]==1],
                              X = as.data.frame(dat[which(dat[[A_name]]==1),which(colnames(dat) %in% X_names),drop=FALSE]),
                              newX = NULL,
