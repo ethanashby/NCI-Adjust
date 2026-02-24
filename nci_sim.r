@@ -48,8 +48,11 @@ run_on_cluster(
       source("create_multivar_survival.r")
       source("CFSurvival_funcs.r")
       source("survSuperLearner_funcs.r")
+      source("AIPWCC.r")
       
-      #L<-sim$levels_grid[6,]
+      #L<-sim$levels_grid[9,]
+      
+      set.seed(47)
       
       data <- create_multivar_survival(n=L$n, 
                                        trt_prob=L$trt_prob, 
@@ -125,21 +128,24 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
       rm(est0)
       gc()
       
-      est4 <- CFsurvival3(
+      est1 <- AIPWCC_CFsurvival(
         time = data$Y, 
         event = data$DeltaY, 
         time_N = data$N1, 
         event_N = data$DeltaN1, 
-        information_level = 3,
         admin_t = round(365*L$admin_date), 
         treat = data$A, 
         W = data.frame(X=data$X), 
-        id = 1:nrow(data), 
-        fit.times = sort(unique(data$Y)), 
-        fit.treat = c(0,1), 
+        id=1:nrow(data),
+        fit.times=sort(unique(c(data$Y[data$Y>0], data$N1[data$N1>0]))), 
+        fit.treat=c(0,1), 
+        conf.band=FALSE, 
+        conf.level=.95, 
+        contrasts = c("risk.ratio"), 
+        verbose=TRUE,
         nuisance.options = CFsurvival.nuisance.options(
           cross.fit = TRUE,
-          V = 8,
+          V = 20,
           folds = NULL,
           eval.times = NULL,
           event.SL.library = c("survSL.km", 
@@ -160,12 +166,7 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
           prop.trunc = 0,
           prop.pred = prop.fit,
           verbose = TRUE
-        ), 
-        conf.band = FALSE, 
-        conf.level = 0.95, 
-        contrasts = c("risk.ratio"), 
-        verbose = TRUE,
-        maxiter=3
+        )
       )
       
       results <- bind_rows(results,
