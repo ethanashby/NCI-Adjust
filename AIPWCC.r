@@ -56,41 +56,45 @@ AIPWCC_CFsurvival <- function(time,
                         conf.level=.95, 
                         contrasts = c("risk.ratio"), 
                         verbose=TRUE) {
-  # time = data$Y;
-  # event = data$DeltaY;
-  # treat = data$A;
-  # W = data %>% dplyr::select("X");
-  # time_N = data$N1;
-  # event_N = data$DeltaN1;
-  # admin_t = 730;
-  # prop.fit<-predict(glm(A~X, data=data, family='binomial'), type='response')
-  # id = 1:nrow(data);
-  # fit.times = sort(unique(c(data$Y[data$Y>0], data$N[data$N>0])));
-  # fit.treat = c(0,1);
-  # nuisance.options = CFsurvival.nuisance.options(
-  #   cross.fit = TRUE,
-  #   V = 20,
-  #   folds = NULL,
-  #   eval.times = NULL,
-  #   event.SL.library = c("survSL.km", "survSL.coxph", "survSL.expreg"),
-  #   event.pred.0 = NULL,
-  #   event.pred.1 = NULL,
-  #   cens.SL.library = c("survSL.km", "survSL.coxph", "survSL.expreg"),
-  #   cens.trunc = 0,
-  #   cens.pred.0 = NULL,
-  #   cens.pred.1 = NULL,
-  #   survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
-  #   survSL.cvControl = list(V = 5),
-  #   save.nuis.fits = FALSE,
-  #   prop.SL.library = NULL,
-  #   prop.trunc = 0,
-  #   prop.pred = prop.fit,
-  #   verbose = TRUE
-  # );
-  # conf.band = FALSE;
-  # conf.level = 0.95;
-  # contrasts = c("risk.ratio");
-  # verbose = TRUE
+  time = data$Y;
+  event = data$DeltaY;
+  time_N = data$N1;
+  event_N = data$DeltaN1;
+  admin_t = round(365*L$admin_date);
+  treat = data$A;
+  W = data.frame(X=data$X);
+  id=1:nrow(data);
+  fit.times=sort(unique(c(data$Y[data$Y>0])));
+  fit.treat=c(0,1);
+  conf.band=FALSE;
+  conf.level=.95;
+  contrasts = c("risk.ratio");
+  verbose=TRUE;
+  nuisance.options = CFsurvival.nuisance.options(
+    cross.fit = TRUE,
+    V = 5,
+    folds = NULL,
+    eval.times = sort(unique(data$N1)),
+    #eval.times = quantile(unique(data$N1), seq(0,1,length.out=101)),
+    event.SL.library = c("survSL.km",
+                         "survSL.coxph",
+                         "survSL.expreg"),
+    event.pred.0 = NULL,
+    event.pred.1 = NULL,
+    cens.SL.library = c("survSL.km",
+                        "survSL.coxph",
+                        "survSL.expreg"),
+    cens.trunc = 0,
+    cens.pred.0 = NULL,
+    cens.pred.1 = NULL,
+    survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+    survSL.cvControl = list(V = 5),
+    save.nuis.fits = FALSE,
+    prop.SL.library = NULL,
+    prop.trunc = 0,
+    prop.pred = prop.fit,
+    verbose = TRUE
+  )
   
   .args <- mget(names(formals()), sys.frame(sys.nframe()))
   
@@ -161,11 +165,6 @@ AIPWCC_CFsurvival <- function(time,
     fit.times <- fit.times[fit.times > 0]
     message("fit.times < 0 removed.")
   }
-  #if(any(fit.times == 0)) fit.times <- fit.times[fit.times > 0]
-  #if(any(fit.times > max(time[event == 1]))) {
-  #  fit.times <- fit.times[fit.times <= max(time[event == 1])]
-  #  message("fit.times > max(time[event == 1]) removed.")
-  #}
   
   if(is.null(nuis$eval.times)){
     nuis$eval.times <- fit.times #sort(unique(c(0,time[time > 0 & time <= max(fit.times)], max(fit.times))))
@@ -222,8 +221,11 @@ AIPWCC_CFsurvival <- function(time,
   
   if((1 %in% fit.treat & (is.null(nuis$event.pred.1) | is.null(nuis$cens.pred.1))) | (0 %in% fit.treat & (is.null(nuis$event.pred.0) | is.null(nuis$cens.pred.0)))) {
     if(verbose) message("Estimating conditional survivals...")
-    nuis$fN <- matrix(NA, nrow=0, ncol=k)
+    
+    nuis$fN <- matrix(NA, nrow=0, ncol=length(nuis$eval.times))
+    
     nuis$id <- vector(length=0)
+    
     if(0 %in% fit.treat & is.null(nuis$event.pred.0)) {
       do.event.pred.0 <- TRUE
       nuis$event.pred.0 <- matrix(NA, nrow=0, ncol=k)
@@ -244,6 +246,9 @@ AIPWCC_CFsurvival <- function(time,
       if(nuis$save.nuis.fits) result$surv.fits <- vector(mode='list',length=nuis$V)
       nuis$event.coef <- nuis$cens.coef <- list()
       for(v in 1:nuis$V) {
+        
+        v=1
+        
         if(verbose) message(paste("Fold ", v, "..."))
         
         train <- which(nuis$fold != v)
@@ -373,7 +378,7 @@ AIPWCC_CFsurvival <- function(time,
                 drop_first <- FALSE
               }
               
-              out<-predict.survSuperLearner.2(object = FN_1, 
+              out<-predict.survSuperLearner.2(object = FN_0, 
                                               newdata = x,
                                               new.times = t,
                                               X = as.data.frame(dat[which(dat[[A_name]]==0),which(colnames(dat) %in% X_names),drop=FALSE]), 
@@ -417,7 +422,7 @@ AIPWCC_CFsurvival <- function(time,
                 drop_first <- FALSE
               }
               
-              out<-predict.survSuperLearner.2(object = FN_1, 
+              out<-predict.survSuperLearner.2(object = FN_0, 
                                               newdata = x,
                                               new.times = t,
                                               X = as.data.frame(dat[which(dat[[A_name]]==0),which(colnames(dat) %in% X_names),drop=FALSE]), 
@@ -617,6 +622,7 @@ AIPWCC_CFsurvival <- function(time,
             ) %>% filter(w>0), row_i %>% select(all_of(W)), .name_repair="minimal")))
           }
         }
+        
         predict.survSuperLearner.2 <- function (object, newdata, new.times, X = NULL, time = NULL, event = NULL, onlySL = FALSE, threshold = 1e-4, ...) {
           if (missing(newdata)) {
             out <- list(survpred = object$event.SL.predict, cens.pred = object$cens.SL.predict,
@@ -730,8 +736,8 @@ AIPWCC_CFsurvival <- function(time,
         aug_test_list <- vector(mode="list", length=nrow(dat_test))
         for(i in 1:nrow(dat_test)){
           aug_test_list[[i]] <- bind_cols(dat_test[i,] %>% dplyr::select(-c("N", "DeltaN")), 
-                    data.frame("N"=fit.times[fit.times<=dat_test[i,]$admin_t], 
-                               "DeltaN"=c(rep(1, length(fit.times[fit.times<=dat_test[i,]$admin_t])-1), 0)))
+                    data.frame("N"=nuis$eval.times[nuis$eval.times<=dat_test[i,]$admin_t], 
+                               "DeltaN"=c(rep(1, length(nuis$eval.times[nuis$eval.times<=dat_test[i,]$admin_t])-1), 0)))
 
           if(nuis$verbose){pb$tick()}
         }
@@ -846,6 +852,10 @@ AIPWCC_CFsurvival <- function(time,
                                                      id = aug_train$id)
         
         gc()
+        
+        #### Everything through here looks correct -- now I need to ensure that the conditional
+        # density calculation is correct and that the AIPWCC estimator is also correct
+        
         # Now I have test-fold per-participant predicted survival of 
         # 1) Y conditional on A, X, N (over a huge grid) 
         # 2) C on A, X
@@ -854,7 +864,8 @@ AIPWCC_CFsurvival <- function(time,
         
         # Next I need to derive the reverse (posterior) density of N at each grid point
         
-        fN <- matrix(data=NA, nrow=nrow(dat_test), ncol=length(fit.times))
+        fN_1 <- matrix(data=NA, nrow=nrow(dat_test), ncol=length(nuis$eval.times))
+        fN_0 <- matrix(data=NA, nrow=nrow(dat_test), ncol=length(nuis$eval.times))
         
         ### Loop through each row of augmented dataset (repeated participants, unique gridpoint N)
         
@@ -862,42 +873,61 @@ AIPWCC_CFsurvival <- function(time,
           pb <- progress_bar$new(total = nrow(dat_test),
                                  format = "Test fold [:bar] :percent ETA: :eta")
         }
+        
         for(i in 1:nrow(dat_test)){
-
+          
           Ai = dat_test[i,][["A"]]
           
           # return vector of survival probabilities for N
           if(Ai==1){
-          SNi <- SN$survest_1(t=fit.times, x=dat_test[i,] %>% select(colnames(W)))
+          SNi <- SN$survest_1(t=nuis$eval.times, x=dat_test[i,] %>% select(colnames(W)))
           }else{
-          SNi <- SN$survest_0(t=fit.times, x=dat_test[i,] %>% select(colnames(W)))
+          SNi <- SN$survest_0(t=nuis$eval.times, x=dat_test[i,] %>% select(colnames(W)))
           }
           
           # conditional probability of irrelevant infection failure at each gridpoint Nj
-          LNi <- diff(1-c(1, SNi))
+          SNi_ext <- c(1, SNi)
+          LNi <- SNi_ext[-length(SNi_ext)] - SNi_ext[-1]
           
           Yi=dat_test[i,][["Y"]]
           DeltaYi=dat_test[i,][["DeltaY"]]
           idi = dat_test[i,][["id"]]
           
-          #Ni=_test[i,][["N"]]
-          #idi <- aug_test[i,][["id"]]
+          Yind = which(fit.times >= Yi)[1]
+          
           indx_aug <- which(aug_test[["id"]]==idi)
           
           if(Ai==1 & DeltaYi==0){
-            #Li = surv.fit$event.pred.1[i,which(fit.times==Yi)] #P(Y > \tilde{y} \mid A, X, N=n)
-            Lvec = surv.fit$event.pred.1[indx_aug, which(fit.times==Yi)] #probs of failure at different N for fixed ppt and Y
-            fN[i,] <- sapply(1:length(LNi), FUN=function(j){(Lvec[j] *LNi[j]) / sum(Lvec * LNi)})
+            Lvec = surv.fit$event.pred.1[indx_aug, Yind] #probs of failure at different N for fixed ppt and Y
+            denom = sum(Lvec * LNi) + 1E-12
+            fN[i,] <- sapply(1:length(LNi), FUN=function(j){(Lvec[j] *LNi[j]) / denom})
           }else if(Ai==1 & DeltaYi==1){
-            #P(Y=k \mid X) = P(Y > k-1 \mid X) - P(Y > k \mid X)
-            Lvec = cbind(1, surv.fit$event.pred.1)[indx_aug,which(fit.times==Yi)] - cbind(1, surv.fit$event.pred.1)[indx_aug,which(fit.times==Yi)]
-            fN[i,] <- sapply(1:length(LNi), FUN=function(j){(Lvec[j] *LNi[j]) / sum(Lvec * LNi)})
+            #P(Y > t) - P(Y > t+1)
+            SY_Ni <- cbind(1, surv.fit$event.pred.1)[indx_aug,]
+            LY_Ni <- SY_Ni[,-ncol(SY_Ni)] - SY_Ni[,-1]
+            
+            #avoid situation where no jump in survival of Y leads to zero weight
+            Yind2<-which((seq(ncol(LY_Ni)) >= Yind) & (colSums(LY_Ni)>0))[1]
+            
+            Lvec = LY_Ni[,Yind2]
+            #Lvec = cbind(1, surv.fit$event.pred.1)[indx_aug,Yind] - cbind(1, surv.fit$event.pred.1)[indx_aug,(Yind+1)]
+            denom = sum(Lvec * LNi)  + 1E-12
+            fN[i,] <- sapply(1:length(LNi), FUN=function(j){(Lvec[j] *LNi[j]) / denom})
            }else if(Ai==0 & DeltaYi==0){
-             Lvec = surv.fit$event.pred.0[indx_aug, which(fit.times==Yi)] #probs of failure at different N for fixed ppt and Y
-             fN[i,] <- sapply(1:length(LNi), FUN=function(j){(Lvec[j] *LNi[j]) / sum(Lvec * LNi)})
+             Lvec = surv.fit$event.pred.0[indx_aug, Yind] #probs of failure at different N for fixed ppt and Y
+             denom = sum(Lvec * LNi)  + 1E-12
+             fN[i,] <- sapply(1:length(LNi), FUN=function(j){(Lvec[j] *LNi[j]) / denom})
           }else{
-            Lvec = cbind(1, surv.fit$event.pred.0)[indx_aug,which(fit.times==Yi)] - cbind(1, surv.fit$event.pred.0)[indx_aug,which(fit.times==Yi)]
-            fN[i,] <- sapply(1:length(LNi), FUN=function(j){(Lvec[j] *LNi[j]) / sum(Lvec * LNi)})
+            #Lvec = cbind(1, surv.fit$event.pred.0)[indx_aug,Yind] - cbind(1, surv.fit$event.pred.0)[indx_aug,(Yind+1)]
+            SY_Ni <- cbind(1, surv.fit$event.pred.0)[indx_aug,]
+            LY_Ni <- SY_Ni[,-ncol(SY_Ni)] - SY_Ni[,-1]
+            
+            #avoid situation where no jump in survival of Y leads to zero weight
+            Yind2<-which((seq(ncol(LY_Ni)) >= Yind) & (colSums(LY_Ni)>0))[1]
+            
+            Lvec = LY_Ni[,Yind2]
+            denom = sum(Lvec * LNi)  + 1E-12
+            fN[i,] <- sapply(1:length(LNi), FUN=function(j){(Lvec[j] *LNi[j]) / denom})
           }
           if(nuis$verbose){pb$tick()}
         }
@@ -923,129 +953,19 @@ AIPWCC_CFsurvival <- function(time,
   #### ESTIMATE CF SURVIVALS ####
   if(verbose) message("Computing counterfactual survivals...")
   
-  # Key function required to compute survival
-  # .get.survival.AIPWCC <- function(Y, DeltaY, N, DeltaN, A, fit.times, eval.times, S.hats, G.hats, g.hats, obsWeights=NULL, id=NULL, isotonize=TRUE, verbose=TRUE) {
-  #   
-  #   # Y=time
-  #   # Delta = event
-  #   # N = time_N
-  #   # DeltaN = event_N
-  #   # A = treat
-  #   # eval.times = fit.times
-  #   # S.hats = nuis$event.pred.1
-  #   # G.hats = nuis$cens.pred.1
-  #   # nuis$fN_1 <- matrix(nuis$fN, nrow = nrow(data), ncol=length(fit.times), byrow = FALSE)
-  #   # nuis$fN_1 <- nuis$fN_1 / rowSums(nuis$fN_1)
-  #   # g.hats <- prop.fit
-  #   
-  #   # Collect fitting times, order them, and order (conditional) survival and censoring probabilities
-  #   fit.times <- fit.times[fit.times > 0]
-  #   n <- length(Y)
-  #   #N <- length(unique(id))
-  #   ord <- order(fit.times)
-  #   fit.times <- fit.times[ord]
-  #   S.hats <- S.hats[,ord]
-  #   G.hats <- G.hats[,ord]
-  #   
-  #   # This holds the per-id IF contribution
-  #   IF.vals <- matrix(NA, nrow=n, ncol=length(fit.times))
-  #   # This holds the final output of influence function contributions.
-  #   surv <- rep(NA, length(fit.times))
-  #   
-  #   Y_ind = match(Y, fit.times)
-  #   N_ind = match(N, fit.times)
-  #   
-  #   # loop through target times t0
-  # 
-  #   if(verbose){
-  #     pb <- progress_bar$new(total = length(Y) * length(fit.times),
-  #                            format = "Computing IFs [:bar] :percent ETA: :eta")
-  #   }
-  #   
-  #   for(i in 1:length(Y)){
-  #       #LOOP OVER INDIVIDUALS
-  #       fN.i <- nuis$fN_1[i,] #(k x 1)conditional probabilities of N|A_i, X_i
-  #       indx.hats <- which(nuis$id==unique(nuis$id)[i]) #(k x 1) index of S.hats
-  #       
-  #       S.hats.i <- S.hats[indx.hats,] #(kxk) rows index potential values of N, columns index Y
-  #       G.hats.i <- G.hats[i,] #(k x 1) single row for single ppt, columns index times t
-  #       
-  #       # list of length k
-  #       # each element contains (k x 1) vector of integral term
-  #       # each list element indexes a value of N
-  #       # each vector indexes values of Y
-  #       vals.i <- t(sapply(1:nrow(S.hats.i), function(j){
-  #         vals <- diff(1/S.hats.i[j,]) * (1/G.hats.i[-length(G.hats.i)]) #(k-1 x 1) vector
-  #         if(any(fit.times[-1] > Y[i])) vals[fit.times[-1] > Y[i]] <- 0
-  #         c(0,cumsum(vals)) #(kx1) vector
-  #       }))
-  #       # else return first inner term over all values over grid of N
-  #       inner.func.2 <- vals.i
-  #       
-  #       # convert to kxk matrix
-  #       # each row corresponds to value of N
-  #       # each column corresponds to value of Y
-  #       
-  #       S.hats.y<-S.hats.i[,Y_ind[i]] #(k x 1) S.hats.Y over grid of N at Y
-  #       G.hats.y<-G.hats.i[Y_ind[i]] #(scalar) G.hats.Y at Y
-  #       
-  #       for(t0 in eval.times) {
-  #       # return index of smallest time greater than t0 (in fit times)
-  #       k <- min(which(fit.times >= t0))
-  # 
-  #       S.hats.t0<-S.hats.i[,k] #(k x 1) S.hats.Y over grid of N at t0
-  #       G.hats.t0<-G.hats.i[k] #(scalar) G.hats.Y at t0
-  #       
-  #       inner.func.1 <- ifelse(Y[i] <= t0 & Delta[i] == 1, 1/(S.hats.y * G.hats.y), 0) #return 0 if no event before t0
-  #       if(length(inner.func.1)==1){
-  #       inner.func.1 <- rep(inner.func.1, length(fit.times))
-  #       }
-  #       
-  #       #list of length k 
-  #       #each list element indexes values for N
-  #       #each vector element indexes 
-  #       IF.vals.i <- S.hats.t0 + as.numeric(A[i]==1) * S.hats.t0 * (-inner.func.1 + inner.func.2[,k])/g.hats[i]
-  #       # S.hats.t0 denotes FIXED Y and variable N
-  #       # inner.func.1 denotes fixed Y and variable N
-  #       # inner.func.2 denotes fixed Y (column k) and variable n
-  #       
-  #       ########
-  #       # NOW MOVE ON TO OBS IF calculation
-  #       
-  #       term1 <- (DeltaN[i]/G.hats.i[N_ind[i]]) * IF.vals.i[N_ind[i]]
-  #       Q0N <- (sum(I(fit.times >= N[i]) * IF.vals.i * fN.i)/sum(I(fit.times >= N[i]) * fN.i))
-  #       term2 <- (1-DeltaN[i])/G.hats.i[N_ind[i]] * Q0N
-  #       
-  #       term3 <- sum(sapply(
-  #         1:length(fit.times[fit.times<=N[i]]), FUN=function(j){
-  #         (sum(I(fit.times >= fit.times[j]) * IF.vals.i * fN.i)/sum(I(fit.times >= fit.times[j]) * fN.i)) * diff(1/c(1,G.hats.i))[j]
-  #       }))
-  #       
-  #     IF.vals[i,k] <- term1 + term2 - term3
-  #     if(verbose){pb$tick()}
-  #     }
-  #   }
-  #   
-  #   surv <- colMeans(IF.vals)
-  #   
-  #   IF.vals.center <- IF.vals - surv
-  # 
-  #   res <- list(times=eval.times, surv=pmin(1,pmax(0,surv)), IF.vals=IF.vals, IF.vals.center = IF.vals.center)
-  #   if(isotonize) {
-  #     res$surv.iso <- NA
-  #     res$surv.iso[!is.na(res$surv)] <- 1 - isoreg(res$times[!is.na(res$surv)], 1-res$surv[!is.na(res$surv)])$yf
-  #   }
-  #   
-  #   return(res)
-  # }
+  # Function which calculates estimator & influence functions
   
-  #### THIS WAS FAST BUT RETURNED SOMETHING WRONG
-  # NEED TO REVISIT
   .get.survival.AIPWCC_fast <- function(
-    Y, DeltaY, N, DeltaN, A,
-    fit.times, eval.times,
-    S.hats, G.hats,
-    g.hats, obsWeights,
+    Y, 
+    DeltaY, 
+    N, 
+    DeltaN, 
+    A,
+    fit.times, 
+    eval.times,
+    S.hats, 
+    G.hats,
+    g.hats,
     nuis,
     isotonize = TRUE,
     verbose = TRUE
@@ -1057,16 +977,20 @@ AIPWCC_CFsurvival <- function(time,
     # A = 1-treat;
     # DeltaN = event_N;
     # fit.times = fit.times;
-    # eval.times = fit.times;
+    # eval.times = nuis$eval.times;
     # S.hats = nuis$event.pred.0;
     # G.hats = nuis$cens.pred.0;
     # g.hats = 1-prop.fit;
     # nuis=nuis;
     # verbose=TRUE
+    # nuis <- list()
+    # nuis$id<-est1$nuisance$id
+    # nuis$fN<-est1$nuisance$fN
     
     fit.times <- fit.times[fit.times > 0]
     n  <- length(Y)
     K  <- length(fit.times)
+    l <- length(eval.times)
     
     if(verbose){
       pb <- progress_bar$new(total = n,
@@ -1074,7 +998,7 @@ AIPWCC_CFsurvival <- function(time,
     }
     
     ord <- order(fit.times)
-    eval.times <- fit.times[ord]
+    #eval.times <- fit.times[ord]
     S.hats <- S.hats[, ord, drop = FALSE]
     G.hats <- G.hats[, ord, drop = FALSE]
     
@@ -1082,7 +1006,7 @@ AIPWCC_CFsurvival <- function(time,
       which(fit.times >= y)[1]
     )
     N_ind <- sapply(N, function(n)
-      which(fit.times >= n)[1]
+      which(eval.times >= n)[1]
     )
     
     IF.vals <- matrix(NA_real_, n, K)
@@ -1090,13 +1014,19 @@ AIPWCC_CFsurvival <- function(time,
     unique_ids <- unique(nuis$id)
     
     for(i in seq_len(n)) {
-      
-      fN.i <- nuis$fN[i, ] #select conditional distribution of N for participant i
+      fN.i <- nuis$fN[i, ] #(l x 1) select conditional distribution of N for participant i
       
       indx.hats <- which(nuis$id == unique_ids[i]) #select rows that correspond to unique id
-      S.hats.i  <- S.hats[indx.hats, , drop = FALSE] #select survival of Y (kxk matrix)
+      S.hats.i  <- S.hats[indx.hats, , drop = FALSE] #select survival of Y (lxk matrix)
       # each row refers to a grid point of N, each column refers to a new value for Y
-      G.hats.i  <- G.hats[i, ] #select censoring survival
+      G.hats.i  <- G.hats[i, ] #(k x 1) select censoring survival
+      
+      # step function for censoring to apply N[i] to
+      Gfun = stepfun(
+        x=fit.times,
+        y = c(1, G.hats.i),
+        right=TRUE
+      )
       
       ## =============================
       ## Discretized compensator
@@ -1106,27 +1036,32 @@ AIPWCC_CFsurvival <- function(time,
       dS_inv <- S_inv[, -1] - S_inv[, -ncol(S_inv)] #selects all columns but first minus all columns minus last
       # check for first part of int.vals
       
-      vals.i <- sweep(dS_inv, 2, (1 / G.hats.i[-length(G.hats.i)]), FUN="*") #I fixed and validated this code chunk
+      vals.i <- sweep(dS_inv, 2, (1 / G.hats.i[-length(G.hats.i)]), FUN="*") #(l x k) 
+      # I fixed and validated this code chunk
       #takes each row of dS_inv and multiplies it by inverse of G.hats.i **elementwise**
       
       # zero beyond Y[i]
-      vals.i[, eval.times[-1] > Y[i]] <- 0
+      vals.i[, fit.times[-1] > Y[i]] <- 0
       
-      vals.i <- cbind(0, t(apply(vals.i, 1, cumsum)))
+      vals.i <- cbind(0, t(apply(vals.i, 1, cumsum))) #(l x k)
       # inner command `apply(vals.i, 1, cumsum)` calculates cumulative sum over each row, 
       # then transposes to ensure that the rowwise cumsums are represented per row
       # then cbinds 0 to ensure margin
       
       #for particular value of Y=Yi, select 
-      S_y <- S.hats.i[, Y_ind[i]] #(Kx1) vector associated with each N
-      G_y <- G.hats.i[Y_ind[i]] #scalar
+      S_y <- S.hats.i[, Y_ind[i]] #(lx1) vector associated with each N
+      #G_y <- G.hats.i[pmax(1,Y_ind[i]-1)] #scalar
+      G_y = Gfun(Y[i]) #SCALAR -- we do this to avoid instability (small value) at boundary
       
-      dG_inv <- diff(1 / c(1, G.hats.i)) #discrete derivative of 1/G.hats (measure to integrate against)
+      #dG_inv <- diff(1 / c(1, G.hats.i)) #(k x 1) discrete derivative of 1/G.hats (measure to integrate against)
+      dG_inv  <- diff(1/c(1, Gfun(nuis$eval.times)))
       
       #loop through length of fit.times
       for(k in seq_len(K)) {
         
-        S_t0 <- S.hats.i[, k] #return predicted survival at that time Y
+        #k=1
+        
+        S_t0 <- S.hats.i[, k] #(l x 1) return predicted survival at that time Y
         
         ## CORRECT time-dependent inner.func.1
         if (Y[i] <= fit.times[k] && DeltaY[i] == 1) {
@@ -1135,16 +1070,16 @@ AIPWCC_CFsurvival <- function(time,
           inner1 <- rep(0, length(S_y)) #return (Kx1) vector of 0s if not satisfied
         }
         
-        IF_k <- S_t0 - ((as.numeric(A[i] == 1)/ g.hats[i]) * S_t0 * (inner1 - vals.i[, k]) )
+        IF_k <- S_t0 - ((as.numeric(A[i] == 1)/ g.hats[i]) * S_t0 * (inner1 - vals.i[, k]) ) #(l x 1)
         
         ### Full-data IF complete (K x 1) vector
         
         Ni <- N_ind[i] #index for N value
         
-        term1 <- (DeltaN[i] / G.hats.i[Ni]) * IF_k[Ni] #if observed, return IPW term
+        term1 <- (DeltaN[i] / Gfun(N[i])) * IF_k[Ni] #(scalar) if observed, return IPW term
         
         ## fast cumulative Q sequence
-        w <- IF_k * fN.i #product of fN.i and influence function
+        w <- IF_k * fN.i #(lx1) product of fN.i and influence function
         denom_cum <- rev(cumsum(rev(fN.i)))
         num_cum   <- rev(cumsum(rev(w)))
         # these chunks above compute the tail sums
@@ -1153,9 +1088,9 @@ AIPWCC_CFsurvival <- function(time,
         # cumsum(rev(fN.i)) reports f_4, f_4+f_3, f_4+f_3+f_2, f_4+f_3+f_2+f_1 (the tail sums from left)
         # rev(cumsum(rev(fN.i))) reports (f_4+f_3+f_2+f_1), (f_4+f_3+f_2), (f_4+f_3), f_4
         # this exactly reflects our desired target
-        Q_seq <- num_cum / denom_cum ###this gives Q_r for all r
+        Q_seq <- num_cum / denom_cum ###(l x 1) this gives Q_r for all r
         
-        term2 <- (1 - DeltaN[i]) / G.hats.i[Ni] * Q_seq[Ni]
+        term2 <- ((1 - DeltaN[i]) / Gfun(N[i])) * Q_seq[Ni] #scalar
         
         term3 <- sum(Q_seq[1:Ni] * dG_inv[1:Ni])
         
@@ -1198,10 +1133,10 @@ AIPWCC_CFsurvival <- function(time,
       A = 1-treat,
       DeltaN = event_N,
       fit.times = fit.times,
-      eval.times = fit.times,
+      eval.times = nuis$eval.times,
       S.hats = nuis$event.pred.0,
       G.hats = nuis$cens.pred.0,
-      g.hats = 1-prop.fit,
+      g.hats = 1-nuis$prop.pred,
       nuis=nuis, 
       verbose=TRUE
     )
@@ -1260,10 +1195,10 @@ AIPWCC_CFsurvival <- function(time,
       A = treat,
       DeltaN = event_N,
       fit.times = fit.times,
-      eval.times = fit.times,
+      eval.times = nuis$eval.times,
       S.hats = nuis$event.pred.1,
       G.hats = nuis$cens.pred.1,
-      g.hats = prop.fit,
+      g.hats = nuis$prop.pred,
       nuis=nuis, 
       verbose=TRUE
     )

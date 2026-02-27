@@ -50,9 +50,8 @@ run_on_cluster(
       source("survSuperLearner_funcs.r")
       source("AIPWCC.r")
       
-      #L<-sim$levels_grid[9,]
-      
-      set.seed(47)
+      L<-sim$levels_grid[6,]
+      L$n<-1200
       
       data <- create_multivar_survival(n=L$n, 
                                        trt_prob=L$trt_prob, 
@@ -116,7 +115,10 @@ run_on_cluster(
           prop.trunc = 0,
           prop.pred = prop.fit,
           verbose = FALSE
-        ), conf.band = FALSE, conf.level = 0.95, contrasts = c("risk.ratio"), verbose = TRUE
+        ), conf.band = FALSE, 
+        conf.level = 0.95, 
+        contrasts = c("risk.ratio"), 
+        verbose = TRUE
       )
       
       results <- bind_rows(results,
@@ -137,7 +139,7 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
         treat = data$A, 
         W = data.frame(X=data$X), 
         id=1:nrow(data),
-        fit.times=sort(unique(c(data$Y[data$Y>0], data$N1[data$N1>0]))), 
+        fit.times=sort(unique(c(data$Y[data$Y>0]))), 
         fit.treat=c(0,1), 
         conf.band=FALSE, 
         conf.level=.95, 
@@ -145,9 +147,10 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
         verbose=TRUE,
         nuisance.options = CFsurvival.nuisance.options(
           cross.fit = TRUE,
-          V = 20,
+          V = 5,
           folds = NULL,
-          eval.times = NULL,
+          #eval.times = quantile(unique(data$N1), seq(0,1,length.out=101)),
+          eval.times = sort(unique(c(data$N1[data$N1>0]))),
           event.SL.library = c("survSL.km", 
                                "survSL.coxph", 
                                "survSL.expreg"),
@@ -170,162 +173,12 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
       )
       
       results <- bind_rows(results,
-                           data.frame("logRR"=tail(est4$risk.ratio.df$log.risk.ratio, 1), 
-                                      "logRR_var"=tail(est4$risk.ratio.df$se.log.ratio^2, 1), 
-                                      "type"="NCI-Adj (Level 3)")
+                           data.frame("logRR"=est1$risk.ratio.df$log.risk.ratio[est1$risk.ratio.df$time==max(data$Y[data$DeltaY==1])], 
+                                      "logRR_var"=(est1$risk.ratio.df$se.log.ratio[est1$risk.ratio.df$time==max(data$Y[data$DeltaY==1])])^2, 
+                                      "type"="NCI-Adj")
       ) 
     
-      rm(est4)
-      gc()
-      
-      est1 <- CFsurvival3(
-        time = data$Y, 
-        event = data$DeltaY, 
-        time_N = data$N1, 
-        event_N = data$DeltaN1, 
-        information_level = 0,
-        admin_t = round(365*L$admin_date), 
-        treat = data$A, 
-        W = data.frame(X=data$X), 
-        id = 1:nrow(data), 
-        fit.times = sort(unique(data$Y)), 
-        fit.treat = c(0,1), 
-        nuisance.options = CFsurvival.nuisance.options(
-          cross.fit = TRUE,
-          V = 5,
-          folds = NULL,
-          eval.times = NULL,
-          event.SL.library = c("survSL.km", 
-                               "survSL.coxph", 
-                               "survSL.expreg"),
-          event.pred.0 = NULL,
-          event.pred.1 = NULL,
-          cens.SL.library = c("survSL.km", 
-                              "survSL.coxph", 
-                              "survSL.expreg"),
-          cens.trunc = 0,
-          cens.pred.0 = NULL,
-          cens.pred.1 = NULL,
-          survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
-          survSL.cvControl = list(V = 5),
-          save.nuis.fits = FALSE,
-          prop.SL.library = NULL,
-          prop.trunc = 0,
-          prop.pred = prop.fit,
-          verbose = TRUE
-        ), 
-        conf.band = FALSE, 
-        conf.level = 0.95, 
-        contrasts = c("risk.ratio"), 
-        verbose = TRUE
-      )
-      
-      results <- bind_rows(results,
-      data.frame("logRR"=tail(est1$risk.ratio.df$log.risk.ratio, 1), 
-                 "logRR_var"=tail(est1$risk.ratio.df$se.log.ratio^2, 1), 
-                 "type"="NCI-Adj (Level 0)")
-      )
-
       rm(est1)
-      gc()
-      
-      est2 <- CFsurvival3(
-        time = data$Y, 
-        event = data$DeltaY, 
-        time_N = data$N1, 
-        event_N = data$DeltaN1, 
-        information_level = 1,
-        admin_t = round(365*L$admin_date), 
-        treat = data$A, 
-        W = data.frame(X=data$X), 
-        id = 1:nrow(data), 
-        fit.times = sort(unique(data$Y)), 
-        fit.treat = c(0,1), 
-        nuisance.options = CFsurvival.nuisance.options(
-          cross.fit = TRUE,
-          V = 5,
-          folds = NULL,
-          eval.times = NULL,
-          event.SL.library = c("survSL.km", 
-                               "survSL.coxph", 
-                               "survSL.expreg"),
-          event.pred.0 = NULL,
-          event.pred.1 = NULL,
-          cens.SL.library = c("survSL.km", 
-                              "survSL.coxph", 
-                              "survSL.expreg"),
-          cens.trunc = 0,
-          cens.pred.0 = NULL,
-          cens.pred.1 = NULL,
-          survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
-          survSL.cvControl = list(V = 5),
-          save.nuis.fits = FALSE,
-          prop.SL.library = NULL,
-          prop.trunc = 0,
-          prop.pred = prop.fit,
-          verbose = TRUE
-        ), 
-        conf.band = FALSE, 
-        conf.level = 0.95, 
-        contrasts = c("risk.ratio"), 
-        verbose = TRUE
-      )
-      
-      results <- bind_rows(results,
-      data.frame("logRR"=tail(est2$risk.ratio.df$log.risk.ratio, 1), 
-                 "logRR_var"=tail(est2$risk.ratio.df$se.log.ratio^2, 1), 
-                 "type"="NCI-Adj (Level 1)")
-      )
-      rm(est2)
-      gc()
-      
-      est3 <- CFsurvival3(
-        time = data$Y, 
-        event = data$DeltaY, 
-        time_N = data$N1, 
-        event_N = data$DeltaN1, 
-        information_level = 2,
-        admin_t = round(365*L$admin_date), 
-        treat = data$A, 
-        W = data.frame(X=data$X), 
-        id = 1:nrow(data), 
-        fit.times = sort(unique(data$Y)), 
-        fit.treat = c(0,1), 
-        nuisance.options = CFsurvival.nuisance.options(
-          cross.fit = TRUE,
-          V = 5,
-          folds = NULL,
-          eval.times = NULL,
-          event.SL.library = c("survSL.km", 
-                               "survSL.coxph", 
-                               "survSL.expreg"),
-          event.pred.0 = NULL,
-          event.pred.1 = NULL,
-          cens.SL.library = c("survSL.km", 
-                              "survSL.coxph", 
-                              "survSL.expreg"),
-          cens.trunc = 0,
-          cens.pred.0 = NULL,
-          cens.pred.1 = NULL,
-          survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
-          survSL.cvControl = list(V = 5),
-          save.nuis.fits = FALSE,
-          prop.SL.library = NULL,
-          prop.trunc = 0,
-          prop.pred = prop.fit,
-          verbose = TRUE
-        ), 
-        conf.band = FALSE, 
-        conf.level = 0.95, 
-        contrasts = c("risk.ratio"), 
-        verbose = TRUE
-      )
-      
-      results <- bind_rows(results,
-                 data.frame("logRR"=tail(est3$risk.ratio.df$log.risk.ratio, 1), 
-                 "logRR_var"=tail(est3$risk.ratio.df$se.log.ratio^2, 1), 
-                 "type"="NCI-Adj (Level 2)"))
-      rm(est3)
       gc()
       
       r <- results %>% 
@@ -346,7 +199,7 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
     })
     
     
-    sim %<>% set_config(num_sim=500, 
+    sim %<>% set_config(num_sim=10, 
                         seed=47,
                         stop_at_error=TRUE,
                         n_cores = n_cores)

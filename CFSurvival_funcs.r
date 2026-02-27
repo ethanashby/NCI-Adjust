@@ -99,6 +99,46 @@ CFsurvival3 <- function(time,
   # contrasts = c("risk.ratio");
   # verbose = TRUE
   
+  # time = data$Y; 
+  # event = data$DeltaY;
+  # time_N = data$N1;
+  # event_N = data$DeltaN1;
+  # information_level=3;
+  # maxiter=3;
+  # admin_t = round(365*L$admin_date);
+  # treat = data$A;
+  # W = data.frame(X=data$X);
+  # id=1:nrow(data);
+  # fit.times=sort(unique(c(data$Y[data$Y>0])));
+  # fit.treat=c(0,1);
+  # conf.band=FALSE;
+  # conf.level=.95;
+  # contrasts = c("risk.ratio"); 
+  # verbose=TRUE;
+  # nuisance.options = CFsurvival.nuisance.options(
+  #   cross.fit = TRUE,
+  #   V = 5,
+  #   folds = NULL,
+  #   event.SL.library = c("survSL.km", 
+  #                        "survSL.coxph", 
+  #                        "survSL.expreg"),
+  #   event.pred.0 = NULL,
+  #   event.pred.1 = NULL,
+  #   cens.SL.library = c("survSL.km", 
+  #                       "survSL.coxph", 
+  #                       "survSL.expreg"),
+  #   cens.trunc = 0,
+  #   cens.pred.0 = NULL,
+  #   cens.pred.1 = NULL,
+  #   survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+  #   survSL.cvControl = list(V = 5),
+  #   save.nuis.fits = FALSE,
+  #   prop.SL.library = NULL,
+  #   prop.trunc = 0,
+  #   prop.pred = prop.fit,
+  #   verbose = TRUE
+  # )
+  
   if(!(information_level %in% c(0,1,2,3))){
     stop("information_level must be one of 0, 1, 2, or 3")
   }
@@ -630,7 +670,7 @@ CFsurvival3 <- function(time,
                 DeltaY = row_i[[DeltaY]],
                 A      = row_i[[A]],
                 admin_t = admin_t_tmp
-              ), row_i[[N]]))
+              ), row_i %>% select(all_of(W))))
             }
           }
           
@@ -666,8 +706,8 @@ CFsurvival3 <- function(time,
           })
           aug_test <- do.call(rbind, aug_test)
           
-          message(paste0("Aug train dimension (", nrow(aug_train), "x", ncol(aug_train), ")"))
-          message(paste0("Aug test dimension (", nrow(aug_test), "x", ncol(aug_test), ")"))
+          #message(paste0("Aug train dimension (", nrow(aug_train), "x", ncol(aug_train), ")"))
+          #message(paste0("Aug test dimension (", nrow(aug_test), "x", ncol(aug_test), ")"))
           
           #Augment test data without weights
           
@@ -2608,7 +2648,7 @@ estimate_conditional_survival_N <- function(dat,
         drop_first <- FALSE
       }
       
-      out<-predict.survSuperLearner.2(object = FN_1, 
+      out<-predict.survSuperLearner.2(object = FN_0, 
                                       newdata = x,
                                       new.times = t,
                                       X = as.data.frame(dat[which(dat[[A_name]]==0),which(colnames(dat) %in% X_names),drop=FALSE]), 
@@ -2652,7 +2692,7 @@ estimate_conditional_survival_N <- function(dat,
         drop_first <- FALSE
       }
       
-      out<-predict.survSuperLearner.2(object = FN_1, 
+      out<-predict.survSuperLearner.2(object = FN_0, 
                                       newdata = x,
                                       new.times = t,
                                       X = as.data.frame(dat[which(dat[[A_name]]==0),which(colnames(dat) %in% X_names),drop=FALSE]), 
