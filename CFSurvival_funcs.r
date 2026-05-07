@@ -2299,8 +2299,8 @@ CFsurvival.nuisance.options <- function(cross.fit = TRUE, V = ifelse(cross.fit, 
   } else {
     newAW <- cbind(A=fit.treat, newW)
   }
-  res <- require(survSuperLearner)
-  if(!res) stop("Please install the package survSuperLearner via:\n devtools::install_github('tedwestling/survSuperLearner')")
+  #res <- require(survSuperLearner)
+  #if(!res) stop("Please install the package survSuperLearner via:\n devtools::install_github('tedwestling/survSuperLearner')")
   if(is.null(survSL.control)) survSL.control <- list(saveFitLibrary = save.fit)
   
   fit <- survSuperLearner(time = Y, event = Delta,  X = AW, newX = newAW, new.times = fit.times, event.SL.library = event.SL.library, cens.SL.library = cens.SL.library, verbose=verbose, control = survSL.control, cvControl = survSL.cvControl)
@@ -2334,7 +2334,7 @@ CFsurvival.nuisance.options <- function(cross.fit = TRUE, V = ifelse(cross.fit, 
 
 .estimate.propensity <- function(A, W, newW, SL.library, fit.treat, prop.trunc, save.fit, verbose) {
   ret <- list()
-  library(SuperLearner)
+  #library(SuperLearner)
   if (length(SL.library) == 1) {
     if(length(unlist(SL.library)) == 2 & ncol(W) > 1) {
       screen <- get(SL.library[[1]][2])
@@ -2438,7 +2438,7 @@ CFsurvival.nuisance.options <- function(cross.fit = TRUE, V = ifelse(cross.fit, 
 
 .estimate.propensity.2 <- function(A, W, newW, SL.library, fit.treat, prop.trunc, save.fit, id, obsWeights, verbose) {
   ret <- list()
-  library(SuperLearner)
+  #library(SuperLearner)
   if (length(SL.library) == 1) {
     if(length(unlist(SL.library)) == 2 & ncol(W) > 1) {
       screen <- get(SL.library[[1]][2])
@@ -2558,7 +2558,7 @@ estimate_conditional_survival_N <- function(dat,
                                             survSL.cvControl, 
                                             verbose){
   
-  req <- require(survSuperLearner)
+  #req <- require(survSuperLearner)
   
   if(is.null(X_names)){
     

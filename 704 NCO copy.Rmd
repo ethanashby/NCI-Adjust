@@ -1,0 +1,1744 @@
+---
+title: "VE 704 NCO Adjust"
+author: "Ethan Ashby"
+output: pdf_document
+date: "2023-12-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#setwd("/Users/ethanashby/Desktop/Peds Immune Response Project/")
+library(tidyverse)
+library(progress)
+library(survminer)
+library(survival)
+library(SuperLearner)
+library(devtools)
+library(doParallel)
+library(foreach)
+#devtools::install_github("tedwestling/CFsurvival", force=TRUE)
+library(CFsurvival)
+#devtools::install_github('tedwestling/survSuperLearner')
+library(survSuperLearner)
+
+### HIV survival dataset
+# rx_pool -- pooled treatment arm
+# rx_code -- treatment assignment
+# enr_date -- enrollment date (date of first infusion)
+# lastnegdts1: late HIV-1 negative sample collection date in schedule 1
+# lastnegdt: last HIV-1 negative sample collection date regardless of schedule
+# dxdt: date of HIV-1 diagnosis if detected (empty if not)
+# s4wd80dt: hypothetical schedule 4 week 80 visit date, defined as 560 days post-enrollment for all participants
+# s4negpostwk80fl: flag indication if participant has evidence of negative HIV-1 status at a post-hypothetical schedule 4 week 80 visit date
+# slwk80dt: Schedule 1 week 80 visit sample draw date, if available
+# slwk80dttgt: schedule 1 target week 80 visit sample draw date, if the visit wwas missed and there is evdeince of HIV-1 negative status in schedule 1 post-week 80
+# fudtwk80: follow-up date of the week 80 visit
+# fudtwk104: follow-up date of the week 104 visit
+# fudayswk80: follow-up time (days) to the week 80 visit
+# fudayswk104: follow-up time (days) to the week 104 visit
+# statuswk80: indicator of HIV infected primary case (1=yes, 0=no)
+# statuswk104: indicator of non-primary HIV infected case (1=yes, 0=no)
+
+dat_704_hiv=read.csv("/Volumes/trials/vaccine/p704/analysis/manuscripts/primary/adata/v704_survival.csv") %>% mutate(ptid=gsub("-", "", ptid))
+
+# Subject master dataset
+# ptid
+# site/siteid
+# country
+# rand_dt
+# age/agegrp
+# race
+# ethnicity
+# s1_date
+# termdt, earlytm, earlytmreas
+# status -- THIS IS A KEY VBL
+# MITTFL
+# duplicate_flag
+# DEMsex
+
+master=read.csv("/Volumes/trials/vaccine/p704/analysis/manuscripts/primary/adata/v704_subject_master.csv") %>% mutate(ptid=gsub("-", "", ptid))
+
+### FIND MORE INFO HERE: /analysis/efficacy/specs/d_dropout.xlsx
+dr <- readxl::read_xlsx("/Volumes/trials/vaccine/p704/analysis/efficacy/specs/d_dropout.xlsx", sheet = 2)
+retention<-haven::read_sas("/Volumes/trials/vaccine/p704/analysis/dsmb/2020_08/closed/adata/retention.sas7bdat")
+# dxdt: HIV diagnosis Date
+# lastattndt: last attended visit date
+# fistmissdt: first missed visit date
+# lastspecdt: last specimen collection date
+# opdt: operational dropout date (lastspecdt + 20*7 days) -- defined as 20 weeks after last specimen collection
+# dropoutwk104: wk104 dropout indicator, defined as (1) terminated from the study prior to their exit visit, (2) have not terminated form the study but have not completed a specimen collection form for at last 20 weeks after their most recently completed specimen collection form (operational dropout definition)
+  # NOTE: if operational dropout date is beyond 2020-Apr-03 and no observed termination, not designated as a dropout
+# dropoutwk104dt: dropout date/censor date through week 104.
+  # IF participant was infected with HIV, their censor date is their diagnosis date
+  # IF participant did not dropout, then the censor date is the greater of their most recent specimen collection date and their last attended visit date
+  # IF a participant dropped out of the stduy, their dropout date is the minimum of their dropout date, termination date, and date of first missed visit prior to dropout
+# dropoutwk104days: days between enrollment and dropout
+
+drop=read.csv("/Volumes/trials/vaccine/p704/analysis/manuscripts/primary/adata/v704_dropout_wk104.csv") %>% mutate(ptid=gsub("-", "", ptid))
+
+# RGC data
+
+dat_704_rgc <- read.csv("/Volumes/trials/vaccine/p704/analysis/adhoc/rgc_hjanes/adata/HVTN704_RGC_longdata.csv")
+
+# All STI data
+
+dat_704_sti <- read.csv("/Volumes/trials/vaccine/p704/analysis/manuscripts/704_sti_Jorge/adata/HVTN704_sti_longdata.csv")
+
+# Herpes Simplex Virus -- only baseline, ignore
+# hsv<-read.csv("/Volumes/trials/vaccine/p704/analysis/efficacy/adata/amp_baseline_HSV2.csv")
+
+# Baseline risk scores
+
+vacc_rs <- read.csv("/Volumes/trials/vaccine/p704/analysis/manuscripts/704_sti_Jorge/adata/vaccine_ptids_with_riskscores.csv")
+
+placebo_rs <- read.csv("/Volumes/trials/vaccine/p704/analysis/manuscripts/704_sti_Jorge/adata/placebo_ptids_with_riskscores.csv")
+```
+
+## Brief Description
+
+Adjustment for baseline factors that explain variability in outcomes can improve the precision of treatment effect estimates in randomized trials. We explore whether supplementing traditional baseline risk factors with markers of HIV exposure measured during follow-up that are assumed unaffected by treatment, also known as negative control outcomes, can further improve the efficiency of inference.
+
+## Data description
+
+We focus on the HVTN704 data, restricting focus to the MITT population. Primary focus was on estimating the log relative risk via cumulative incidence ratio between arms that received VRC01 relative to the arm that received placebo.
+
+We considered the following forms of estimating the log relative risk assocaiated with VRC01 treatment.
+1) Naive approach: a plug-in estimator of the log relative risk.
+2) Baseline covariate adjusted relative risk: adjustment for standardized baseline risk score (based on SL).
+3) NCO adjustment: adjustment for time-to-positive STI test under different imputation strategies.
+
+```{r HIV}
+#dat_704_hiv=subset(dat_704_hiv, MITT_flag==1 & efficacy_flag==1)
+dat_704_hiv$fu_year_wk80=dat_704_hiv$fudayswk80/365.25
+dat_704_hiv$fu_year_wk104=dat_704_hiv$fudayswk104/365.25
+
+#dat_704_hiv <- dat_704_hiv %>% filter(time_yrs > 0)
+dat_704_hiv <- dat_704_hiv %>% mutate(ptid=gsub("-", "", ptid))
+
+# KM curves over 104 weeks for HIV
+#plot(survfit(Surv(fudayswk104, statuswk104)~prot_rx, data=dat_704_hiv %>% filter(efficacy_flag==1)), fun="F", col=c("black", "blue", "red"))
+
+ggsurvplot(survfit(Surv(fudayswk104, statuswk104)~rx_code, data=dat_704_hiv %>% filter(efficacy_flag==1, MITT_flag==1)), fun="event", cumcensor = TRUE, censor = FALSE)
+
+dat_704_hiv_1 <- 
+  left_join(
+    left_join(dat_704_hiv, 
+                           master %>% 
+                             dplyr::select(ptid, termdt, earlytm, earlytmreas, discdt), by="ptid"),
+    drop %>% dplyr::select(ptid, opdt, dropoutwk104, dropoutwk104dt, dropoutwk104days))
+```
+
+### Are bSTIs valid NCOs for HIV-1 infection?
+
+We *did not* filter for scheduled nor sti visits, including some number of interim visits -- the majority of which were unprompted by missed scheduled visit and a few of which were possibly prompted by a missed STI.
+
+#### RGC
+
+Negligible effect of VRC01 on rectal gonorrhea. 
+
+```{r Alternative_simple_RGC}
+
+#Step 1: extract positive RGC diagnoses
+
+infs <- dat_704_rgc %>% 
+  mutate(ptid=as.character(ptid)) %>% 
+  filter(test=="rectal") %>%
+  dplyr::group_by(ptid) %>%
+  dplyr::summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  )
+
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess <- left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, 
+                                            rx_code, 
+                                            rx_pool, 
+                                            MITT_flag, 
+                                            efficacy_flag, 
+                                            enrdt, 
+                                            fudtwk104, 
+                                            fudayswk104, 
+                                            statuswk104), infs, by="ptid")
+
+
+dat_704_assess <- dat_704_assess %>% 
+  mutate(TTE = as.numeric(difftime(dt1, dmy(enrdt), units="days"))+1)
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+# library(fastDummies)
+# 
+# dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+# dat_704_assess$URM <- ifelse(
+#   dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+#   0, 1)
+# 
+# dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+# dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+# covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p1<-ggsurvplot(survfit(Surv(TTE, delta1)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), legend.labs = c("Placebo", "VRC01"))
+```
+
+```{r CFsurvival_RGC}
+fit_assess <- CFsurvival(time = dat_704_rgc_assess$futime, 
+                  event = dat_704_rgc_assess$event_ind, 
+                  treat = dat_704_rgc_assess$rx_pool_numeric, 
+                  confounders = as.matrix(covars), 
+                  contrasts = c("risk.ratio"), 
+                  verbose = TRUE, 
+                  fit.times = seq(0, 2.56, by=0.01), 
+                  fit.treat = c(0,1),
+                 nuisance.options = list(prop.SL.library = NULL,
+                                         event.SL.library = c("survSL.km", "survSL.coxph"),
+                                         cens.SL.library = c("survSL.km", "survSL.coxph"),
+                                         prop.pred=rep(mean(dat_704_rgc_assess$rx_pool_numeric), length(dat_704_rgc_assess$rx_pool_numeric)),
+                                         cross.fit =TRUE, V=3, save.nuis.fits = FALSE), 
+                 conf.band = TRUE, conf.level = .95)
+
+pdf("/Users/ethanashby/Desktop/AMP NCO Adj/cuminc_RGC.pdf", width=8, height=6.5)
+ggplot(fit_assess$surv.df %>% 
+         mutate(cuminc=1-surv, 
+                cuminc.lower = 1-ptwise.upper, 
+                cuminc.upper=1-ptwise.lower,
+                trt = factor(trt, levels=c(0,1), labels=c("Placebo", "VRC01"))))+
+  geom_step(aes(x=time, y=cuminc, group=trt, color=trt))+
+  geom_ribbon(aes(x=time, ymin=cuminc.lower, ymax=cuminc.upper, group=trt, color=trt, fill=trt), alpha=0.2)+
+  geom_vline(xintercept=80*7/365.25, linetype=2)+
+  scale_color_manual(values=c("orange", "purple"))+
+  scale_fill_manual(values=c("orange", "purple"))+
+  scale_y_continuous(labels=scales::percent)+
+  theme_bw()+
+  theme(
+    legend.position="bottom",
+    panel.grid=element_blank(),
+    axis.text=element_text(size=14),
+    axis.title=element_text(size=16),
+    legend.text=element_text(size=12),
+    legend.title=element_text(size=14)
+  )+
+  labs(x="Time since randomization (years)", y="Cumulative incidence RCG", color="Arm", fill="Arm")
+dev.off()
+
+pdf("/Users/ethanashby/Desktop/AMP NCO Adj/RR_RGC.pdf", width=8, height=6.5)
+ggplot(fit_assess$risk.ratio.df)+
+  geom_step(aes(x=time, y=risk.ratio))+
+  geom_ribbon(aes(x=time, ymin=ptwise.lower, ymax=ptwise.upper), linetype=2, alpha=1, fill=NA, color="black")+
+  geom_ribbon(aes(x=time, ymin=unif.lower, ymax=unif.upper), linetype=3, alpha=1, fill=NA, color="black")+
+  geom_vline(xintercept=80*7/365.25, linetype=2)+
+  theme_bw()+
+  theme(
+    #legend.position="bottom",
+    panel.grid=element_blank(),
+    axis.text=element_text(size=14),
+    axis.title=element_text(size=16),
+    legend.text=element_text(size=12),
+    legend.title=element_text(size=14)
+  )+
+  geom_hline(yintercept=1, linetype=2)+
+  labs(x="Time since randomization (years)", y="Cumulative incidence ratio RCG (VRC01:Placebo)")+
+  coord_cartesian(ylim=c(0,2))
+dev.off()
+```
+
+#### OGC
+
+Moderate small negative effect of VRC01 on oropharyngeal gonorrhea -- likely not good NCO.
+
+```{r}
+#Step 1: extract positive RGC diagnoses
+
+infs <- dat_704_rgc %>% 
+  mutate(ptid=as.character(ptid)) %>% 
+  filter(test=="oropharyngeal") %>%
+  group_by(ptid) %>%
+  summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  )
+
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess <- left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, 
+                                            rx_code, 
+                                            rx_pool, 
+                                            MITT_flag, 
+                                            efficacy_flag, 
+                                            enrdt, 
+                                            fudtwk104, 
+                                            fudayswk104, 
+                                            statuswk104), infs, by="ptid")
+
+
+dat_704_assess <- dat_704_assess %>% 
+  mutate(TTE = as.numeric(difftime(dt1, dmy(enrdt), units="days"))+1)
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+# library(fastDummies)
+# 
+# dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+# dat_704_assess$URM <- ifelse(
+#   dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+#   0, 1)
+# 
+# dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+# dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+#covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p2<-ggsurvplot(survfit(Surv(TTE, delta1)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), legend.labs = c("Placebo", "VRC01"))
+```
+
+```{r eval=F}
+#Step 1: extract positive diagnoses
+
+infs <- dat_704_rgc %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(test=="oropharyngeal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>%
+  dplyr::select(ptid, visitdt, value)
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess<-left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, rx_code, rx_pool, MITT_flag, efficacy_flag, enrdt, fudtwk104, statuswk104),
+          infs, by="ptid")
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+#Step 4: define end date variable and event indicator
+# If no HIV-1 infection, take minimum 
+
+dat_704_assess <- dat_704_assess %>%
+  mutate(
+    enddt = case_when(
+      statuswk104 == 0 ~ pmin(ymd(visitdt), dmy(fudtwk104), dmy(termdt), na.rm=TRUE),
+      statuswk104 == 1 ~ pmin(ymd(visitdt), dmy(termdt), na.rm=TRUE)
+    ),
+    event_ind = case_when(
+      is.na(value)~ 0,
+      value==2 ~ 1
+    ),
+    futime = ((as.numeric(difftime(enddt, dmy(enrdt), units="days"))+1)/365.25)
+  )
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+library(fastDummies)
+
+dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+dat_704_assess$URM <- ifelse(
+  dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+  0, 1)
+
+dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p2<-ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), xlim=c(0, 104*7/365.25))
+```
+
+#### UGC
+
+No clear effect of VRC01 on urine gonorrhea (rare).
+
+```{r}
+#Step 1: extract positive RGC diagnoses
+
+infs <- dat_704_rgc %>% 
+  mutate(ptid=as.character(ptid)) %>% 
+  filter(test=="urine") %>%
+  group_by(ptid) %>%
+  summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  )
+
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess <- left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, 
+                                            rx_code, 
+                                            rx_pool, 
+                                            MITT_flag, 
+                                            efficacy_flag, 
+                                            enrdt, 
+                                            fudtwk104, 
+                                            fudayswk104, 
+                                            statuswk104), infs, by="ptid")
+
+
+dat_704_assess <- dat_704_assess %>% 
+  mutate(TTE = as.numeric(difftime(dt1, dmy(enrdt), units="days"))+1)
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+# library(fastDummies)
+# 
+# dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+# dat_704_assess$URM <- ifelse(
+#   dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+#   0, 1)
+# 
+# dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+# dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+#covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p3<-ggsurvplot(survfit(Surv(TTE, delta1)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), legend.labs = c("Placebo", "VRC01"))
+```
+
+```{r eval=F}
+#Step 1: extract positive diagnoses
+
+infs <- dat_704_rgc %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(test=="urine" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>%
+  dplyr::select(ptid, visitdt, value)
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess<-left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, rx_code, rx_pool, MITT_flag, efficacy_flag, enrdt, fudtwk104, statuswk104),
+          infs, by="ptid")
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+#Step 4: define end date variable and event indicator
+# If no HIV-1 infection, take minimum 
+
+dat_704_assess <- dat_704_assess %>%
+  mutate(
+    enddt = case_when(
+      statuswk104 == 0 ~ pmin(ymd(visitdt), dmy(fudtwk104), dmy(termdt), na.rm=TRUE),
+      statuswk104 == 1 ~ pmin(ymd(visitdt), dmy(termdt), na.rm=TRUE)
+    ),
+    event_ind = case_when(
+      is.na(value)~ 0,
+      value==2 ~ 1
+    ),
+    futime = ((as.numeric(difftime(enddt, dmy(enrdt), units="days"))+1)/365.25)
+  )
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+library(fastDummies)
+
+dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+dat_704_assess$URM <- ifelse(
+  dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+  0, 1)
+
+dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p3<-ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), xlim=c(0, 104*7/365.25))
+```
+
+#### Syphilis (treponemal)
+
+Small negative effect of VRC01 on syphilis (treponemal).
+
+```{r}
+infs <- dat_704_sti %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="Syphilis" & test=="treponemal") %>%
+  group_by(ptid) %>%
+  summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  )
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess <- left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, 
+                                            rx_code, 
+                                            rx_pool, 
+                                            MITT_flag, 
+                                            efficacy_flag, 
+                                            enrdt, 
+                                            fudtwk104, 
+                                            fudayswk104, 
+                                            statuswk104), infs, by="ptid")
+
+
+dat_704_assess <- dat_704_assess %>% 
+  mutate(TTE = as.numeric(difftime(dt1, dmy(enrdt), units="days"))+1)
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+# library(fastDummies)
+# 
+# dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+# dat_704_assess$URM <- ifelse(
+#   dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+#   0, 1)
+# 
+# dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+# dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+#covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p4<-ggsurvplot(survfit(Surv(TTE, delta1)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), legend.labs = c("Placebo", "VRC01"))
+```
+
+```{r eval=F}
+#Step 1: extract positive diagnoses
+
+infs <- dat_704_sti %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="Syphilis" & test=="treponemal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>%
+  dplyr::select(ptid, visitdt, value)
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess<-left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, rx_code, rx_pool, MITT_flag, efficacy_flag, enrdt, fudtwk104, statuswk104),
+          infs, by="ptid")
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+#Step 4: define end date variable and event indicator
+# If no HIV-1 infection, take minimum 
+
+dat_704_assess <- dat_704_assess %>%
+  mutate(
+    enddt = case_when(
+      statuswk104 == 0 ~ pmin(ymd(visitdt), dmy(fudtwk104), dmy(termdt), na.rm=TRUE),
+      statuswk104 == 1 ~ pmin(ymd(visitdt), dmy(termdt), na.rm=TRUE)
+    ),
+    event_ind = case_when(
+      is.na(value)~ 0,
+      value==2 ~ 1
+    ),
+    futime = ((as.numeric(difftime(enddt, dmy(enrdt), units="days"))+1)/365.25)
+  )
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+library(fastDummies)
+
+dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+dat_704_assess$URM <- ifelse(
+  dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+  0, 1)
+
+dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p4<-ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), xlim=c(0, 104*7/365.25))
+```
+
+#### Syphilis (non-treponemal)
+
+Small late negative effect of VRC01 on syphilis (non-treponemal).
+
+```{r}
+infs <- dat_704_sti %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="Syphilis" & test=="non-treponemal") %>%
+  group_by(ptid) %>%
+  summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  )
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess <- left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, 
+                                            rx_code, 
+                                            rx_pool, 
+                                            MITT_flag, 
+                                            efficacy_flag, 
+                                            enrdt, 
+                                            fudtwk104, 
+                                            fudayswk104, 
+                                            statuswk104), infs, by="ptid")
+
+
+dat_704_assess <- dat_704_assess %>% 
+  mutate(TTE = as.numeric(difftime(dt1, dmy(enrdt), units="days"))+1)
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+# library(fastDummies)
+# 
+# dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+# dat_704_assess$URM <- ifelse(
+#   dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+#   0, 1)
+# 
+# dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+# dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+#covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p5<-ggsurvplot(survfit(Surv(TTE, delta1)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), legend.labs = c("Placebo", "VRC01"))
+```
+
+```{r eval=F}
+#Step 1: extract positive diagnoses
+
+infs <- dat_704_sti %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="Syphilis" & test=="non-treponemal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>%
+  dplyr::select(ptid, visitdt, value)
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess<-left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, rx_code, rx_pool, MITT_flag, efficacy_flag, enrdt, fudtwk104, statuswk104),
+          infs, by="ptid")
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+#Step 4: define end date variable and event indicator
+# If no HIV-1 infection, take minimum 
+
+dat_704_assess <- dat_704_assess %>%
+  mutate(
+    enddt = case_when(
+      statuswk104 == 0 ~ pmin(ymd(visitdt), dmy(fudtwk104), dmy(termdt), na.rm=TRUE),
+      statuswk104 == 1 ~ pmin(ymd(visitdt), dmy(termdt), na.rm=TRUE)
+    ),
+    event_ind = case_when(
+      is.na(value)~ 0,
+      value==2 ~ 1
+    ),
+    futime = ((as.numeric(difftime(enddt, dmy(enrdt), units="days"))+1)/365.25)
+  )
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+library(fastDummies)
+
+dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+dat_704_assess$URM <- ifelse(
+  dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+  0, 1)
+
+dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p5<-ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), xlim=c(0, 104*7/365.25))
+```
+
+#### Rectal chlaymdia
+
+Very small late negative effect of VRC01 on rectal chlamydia.
+
+```{r}
+infs <- dat_704_sti %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="C. trachomatis" & test=="rectal") %>%
+  group_by(ptid) %>%
+  summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  )
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess <- left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, 
+                                            rx_code, 
+                                            rx_pool, 
+                                            MITT_flag, 
+                                            efficacy_flag, 
+                                            enrdt, 
+                                            fudtwk104, 
+                                            fudayswk104, 
+                                            statuswk104), infs, by="ptid")
+
+dat_704_assess <- dat_704_assess %>% 
+  mutate(TTE = as.numeric(difftime(dt1, dmy(enrdt), units="days"))+1)
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+p6<-ggsurvplot(survfit(Surv(TTE, delta1)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), legend.labs = c("Placebo", "VRC01"))
+```
+
+```{r eval=F}
+#Step 1: extract positive diagnoses
+
+infs <- dat_704_sti %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="C. trachomatis" & test=="rectal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>%
+  dplyr::select(ptid, visitdt, value)
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess<-left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, rx_code, rx_pool, MITT_flag, efficacy_flag, enrdt, fudtwk104, statuswk104),
+          infs, by="ptid")
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+#Step 4: define end date variable and event indicator
+# If no HIV-1 infection, take minimum 
+
+dat_704_assess <- dat_704_assess %>%
+  mutate(
+    enddt = case_when(
+      statuswk104 == 0 ~ pmin(ymd(visitdt), dmy(fudtwk104), dmy(termdt), na.rm=TRUE),
+      statuswk104 == 1 ~ pmin(ymd(visitdt), dmy(termdt), na.rm=TRUE)
+    ),
+    event_ind = case_when(
+      is.na(value)~ 0,
+      value==2 ~ 1
+    ),
+    futime = ((as.numeric(difftime(enddt, dmy(enrdt), units="days"))+1)/365.25)
+  )
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+library(fastDummies)
+
+dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+dat_704_assess$URM <- ifelse(
+  dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+  0, 1)
+
+dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p6<-ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), xlim=c(0, 104*7/365.25))
+```
+
+#### Urinary chlaymdia
+
+Zero effect of VRC01 on urine chlamydia.
+
+```{r}
+infs <- dat_704_sti %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="C. trachomatis" & test=="urine") %>%
+  group_by(ptid) %>%
+  summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  )
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess <- left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, 
+                                            rx_code, 
+                                            rx_pool, 
+                                            MITT_flag, 
+                                            efficacy_flag, 
+                                            enrdt, 
+                                            fudtwk104, 
+                                            fudayswk104, 
+                                            statuswk104), infs, by="ptid")
+
+dat_704_assess <- dat_704_assess %>% 
+  mutate(TTE = as.numeric(difftime(dt1, dmy(enrdt), units="days"))+1)
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+p7<-ggsurvplot(survfit(Surv(TTE, delta1)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), legend.labs = c("Placebo", "VRC01"))
+```
+
+```{r eval=F}
+#Step 1: extract positive diagnoses
+
+infs <- dat_704_sti %>% 
+  #filter(visittpfl %in% c("sched", "sti")) %>%
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="C. trachomatis" & test=="urine" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>%
+  dplyr::select(ptid, visitdt, value)
+
+#Step 2: join them to HIV dataset
+
+dat_704_assess<-left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, rx_code, rx_pool, MITT_flag, efficacy_flag, enrdt, fudtwk104, statuswk104),
+          infs, by="ptid")
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+#Step 4: define end date variable and event indicator
+# If no HIV-1 infection, take minimum 
+
+dat_704_assess <- dat_704_assess %>%
+  mutate(
+    enddt = case_when(
+      statuswk104 == 0 ~ pmin(ymd(visitdt), dmy(fudtwk104), dmy(termdt), na.rm=TRUE),
+      statuswk104 == 1 ~ pmin(ymd(visitdt), dmy(termdt), na.rm=TRUE)
+    ),
+    event_ind = case_when(
+      is.na(value)~ 0,
+      value==2 ~ 1
+    ),
+    futime = ((as.numeric(difftime(enddt, dmy(enrdt), units="days"))+1)/365.25)
+  )
+
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+library(fastDummies)
+
+dat_704_assess$agegrp<-factor(dat_704_assess$agegrp, levels=c("18 - 20", "21 - 30", "31 - 40", "41 - 50", ">50"))
+dat_704_assess$URM <- ifelse(
+  dat_704_assess$race=="White" & dat_704_assess$ethnicity=="Not Hispanic or Latino/a",
+  0, 1)
+
+dat_704_assess$rx_pool_numeric<-ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+dat_704_assess$futime<-ifelse(dat_704_assess$futime<=0, min(dat_704_assess$futime[dat_704_assess$futime>0]), dat_704_assess$futime)
+
+# covars <- dummy_cols(dat_704_assess %>% ungroup() %>% dplyr::select(agegrp, URM, standardized_risk_score), remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>% as.data.frame()
+
+covars<-dat_704_assess %>% ungroup() %>% dplyr::select(age, URM, standardized_risk_score) %>% as.data.frame()
+
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_code, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+#ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess), fun="event", censor=F, conf.int=TRUE)
+
+p7<-ggsurvplot(survfit(Surv(futime, event_ind)~rx_pool, dat_704_assess %>% mutate(rx_pool=factor(rx_pool, levels=c("C3", "T1+T2"), labels=c("Placebo", "VRC01")))), fun="event", censor=F, conf.int=TRUE, palette=c("orange", "purple"), xlim=c(0, 104*7/365.25))
+```
+
+#### Arrange them
+
+Arrange them
+
+```{r}
+library(patchwork)
+#library(cowplot)
+
+pdf("/Users/ethanashby/Desktop/NCI_adj/NCO_valid_all.pdf", width=11.5, height=6.5)
+p1$plot+scale_y_continuous(labels=scales::percent)+theme(legend.position = "none")+labs(y="Cumulative Incidence", x="Time since randomization (days)", subtitle="Rectal gonorrhea")+geom_vline(xintercept=7*104)+
+p2$plot+scale_y_continuous(labels=scales::percent)+theme(legend.position = "none")+labs(y="Cumulative Incidence", x="Time since randomization (days)", subtitle="Oropharyngeal gonorrhea")+geom_vline(xintercept=7*104)+
+p3$plot+scale_y_continuous(labels=scales::percent)+theme(legend.position = "none")+labs(y="Cumulative Incidence", x="Time since randomization (days)", subtitle="Urinary gonorrhea")+geom_vline(xintercept=7*104)+
+p4$plot+scale_y_continuous(labels=scales::percent)+theme(legend.position = "none")+labs(y="Cumulative Incidence", x="Time since randomization (days)", subtitle="Syphilis (treponemal)")+geom_vline(xintercept=7*104)+
+p5$plot+scale_y_continuous(labels=scales::percent)+theme(legend.position = "none")+labs(y="Cumulative Incidence", x="Time since randomization (days)", subtitle="Syphilis (non-treponemal)")+geom_vline(xintercept=7*104)+
+p6$plot+scale_y_continuous(labels=scales::percent)+theme(legend.position = "none")+labs(y="Cumulative Incidence", x="Time since randomization (days)", subtitle="Rectal chlamydia")+geom_vline(xintercept=7*104)+
+p7$plot+scale_y_continuous(labels=scales::percent)+theme(legend.position = "none")+labs(y="Cumulative Incidence", x="Time since randomization (days)", subtitle="Urinary chlamydia")+geom_vline(xintercept=7*104)+
+  as_ggplot(ggpubr::get_legend(p1$plot))+theme(legend.title=element_text(size=20), legend.text=element_text(size=16))
+dev.off()
+
+
+```
+
+# Adjusted estimators of logRR
+
+```{r dropout_data}
+# We define whether participants had completed follow-up to 104 weeks
+# Key things we would like to collect: 
+# 1) randomization date, 
+# 2) study exit date, 
+# 3) whether exit was associated with dropout or end of 104week follow-up
+# 4) what is their administrative censoring date (hypothetical wk104 visit)
+
+drop_data <- data.frame(ptid=rep(NA, nrow(dat_704_hiv_1)), 
+                        in_dt = rep(NA_Date_, nrow(dat_704_hiv_1)), 
+                        out_dt=rep(NA_Date_, nrow(dat_704_hiv_1)),
+                        admin_dt = rep(NA_Date_, nrow(dat_704_hiv_1)),
+                        drop104 = rep(NA, nrow(dat_704_hiv_1)),
+                        fudays = rep(NA, nrow(dat_704_hiv_1)),
+                        admin_fudays = rep(NA, nrow(dat_704_hiv_1)))
+
+for(i in 1:nrow(dat_704_hiv_1)){
+  
+  if(i %% 100 == 0){print(i)}
+  ptid_tmp<-dat_704_hiv_1$ptid[i]
+  
+  drop_data$ptid[i]<-ptid_tmp
+  
+  slice_drop<-drop %>% filter(ptid==ptid_tmp)
+  slice_retain <- retention %>% filter(ptid==ptid_tmp)
+  if(slice_drop$dropoutwk104==1){
+    
+    # select date of randomization/first infusion
+    drop_data$in_dt[i] <- slice_retain %>% 
+      filter(visit==201) %>% 
+      dplyr::select(visitdt) %>% 
+      mutate(visitdt = as.Date(visitdt)) %>%
+      .$visitdt
+    
+    # select date of dropout 
+    drop_data$out_dt[i] <- slice_drop$dropoutwk104dt
+    
+    # indicate dropout
+    drop_data$drop104[i]<-1
+    
+    drop_data$fudays[i]<-slice_drop$dropoutwk104days
+    
+    # target wk 104 date
+    if(any(slice_retain$visit==2601)){
+    
+    t<-slice_retain$targetdt[which(slice_retain$visit==2601)]
+    if(is.na(t)){
+    drop_data$admin_dt[i] = as.Date(drop_data$in_dt[i]) + 7 * 104
+    }else{
+    drop_data$admin_dt[i] = slice_retain$targetdt[which(slice_retain$visit==2601)] 
+    }
+    
+    }else{
+    drop_data$admin_dt[i] = as.Date(drop_data$in_dt[i]) + 7 * 104
+    }
+    
+    drop_data$admin_fudays[i] <- as.numeric(difftime(drop_data$admin_dt[i], drop_data$in_dt[i], units="days"))
+  }else{
+    
+    # select date of randomization/first infusion
+    drop_data$in_dt[i] <- slice_retain %>% 
+      filter(visit==201) %>% 
+      dplyr::select(visitdt) %>% 
+      mutate(visitdt = as.Date(visitdt)) %>%
+      .$visitdt
+    
+    # select date of dropout 
+    # target date wk 104 
+    # and days
+    if(is.na(slice_drop$dxdt)){
+      # IF NO HIV INFECTION
+      drop_data$out_dt[i] <- slice_drop$dropoutwk104dt
+      drop_data$admin_dt[i] <- slice_drop$dropoutwk104dt
+      drop_data$fudays[i] <- slice_drop$dropoutwk104days
+      drop_data$admin_fudays[i] <- slice_drop$dropoutwk104days
+      # indicate no dropout
+      drop_data$drop104[i]<-0
+    }else{
+      # IF YES HIV INFECTION
+      drop_data$out_dt[i] <- slice_drop$dropoutwk104dt
+      drop_data$admin_dt[i] <- drop_data$in_dt[i] + 7 * 104
+      drop_data$fudays[i] <- slice_drop$dropoutwk104days
+      drop_data$admin_fudays[i] <- 7 * 104
+      # indicate no dropout
+      drop_data$drop104[i]<-1
+    }
+    
+  }
+  
+}
+rm(slice_retain, slice_drop, i)
+all(complete.cases(drop_data)) # all complete cases
+```
+
+```{r process_to_input}
+infs <- dat_704_rgc %>% 
+  mutate(ptid=as.character(ptid)) %>% 
+  filter(test=="rectal") %>%
+  dplyr::group_by(ptid) %>%
+  dplyr::summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  )
+
+infs <- left_join(infs, drop_data %>% dplyr::select(ptid, 
+                                            in_dt, 
+                                            out_dt, 
+                                            admin_dt, 
+                                            drop104, 
+                                            fudays, 
+                                            admin_fudays), by='ptid') %>%
+  mutate(
+    in_dt = in_dt,
+    N_dt = case_when(
+      delta1 == 0 ~ out_dt,
+      delta1 == 1 ~ pmin(out_dt, dt1)
+    ),
+    delta1 = case_when(
+      delta1 == 0 ~ 0,
+      delta1 == 1 ~ dt1 == N_dt
+    ),
+    admin_dt = admin_dt,
+    fudays_1 = as.numeric(difftime(N_dt, in_dt, units="days")),
+    admin_fudays = admin_fudays
+  )
+
+# This dataframe contains the participant ID
+# Observed time to NCI/censoring
+# Event indicator
+# Intended admin censoring time
+# dropout indicator
+infs_1 <- infs %>% dplyr::select(ptid, fudays_1, admin_fudays, delta1, drop104)
+
+#plot(survfit(Surv(fudays_1, delta1) ~ 1, data=infs_1), fun="event");abline(v=7*104)
+
+to_fit <- left_join(dat_704_hiv, infs_1, by="ptid") %>%
+  filter(MITT_flag==1 & efficacy_flag==1) %>%
+  mutate(
+    A=ifelse(rx_pool=="T1+T2", 1, 0),
+    N1 = pmax(fudays_1, 1),
+  ) %>%
+  rename(
+    Y = fudayswk104,
+    DeltaY = statuswk104,
+    DeltaN1 = delta1,
+    admin_t = admin_fudays
+  ) %>%
+  dplyr::select(ptid, A, Y, DeltaY, N1, DeltaN1, admin_t)
+
+to_fit <- left_join(to_fit, bind_rows(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score), placebo_rs %>% dplyr::select(usubjid, standardized_risk_score)) %>% mutate(usubjid=as.character(usubjid)), by = c("ptid"="usubjid")) %>% 
+  rename(
+    X=standardized_risk_score
+  ) %>%
+  mutate(
+    X = ifelse(is.na(X), 0, X)
+  )
+
+
+to_fit_1 <- left_join(to_fit, master %>% 
+            mutate(URM = case_when(
+              race=="White" & ethnicity=="Not Hispanic or Latino/a" ~ 0, 
+              .default = 1
+            ),
+            agegrp = factor(case_when(
+              agegrp == "18 - 20" ~ "18 - 20",
+              agegrp == "21 - 30" ~ "21 - 30",
+              agegrp == "31 - 40" ~ "31 - 40",
+              .default = ">40"
+            ), levels=c("18 - 20", "21 - 30", "31 - 40", ">40")),
+            country = factor(country, levels = c("United States", "Peru", "Switzerland", "Brazil"))
+            ) %>%
+            dplyr::select(ptid, country, agegrp, URM)
+)
+
+to_fit$ptid <- 1:nrow(to_fit)
+to_fit_1$ptid <- 1:nrow(to_fit_1)
+```
+
+```{r}
+#ggsurvplot(survfit(Surv(N1, DeltaN1)~A, data=to_fit), fun="event")
+
+# KM
+
+res_KM<-summary(survfit(Surv(Y, DeltaY)~A, data=to_fit), times=104*7)
+event_prob <- 1-res_KM$surv
+log(event_prob[2]/event_prob[1])
+msm::deltamethod(~log((1-x2)/(1-x1)), mean=1-event_prob, cov=diag(res_KM$std.err^2), ses = TRUE)
+
+fit<-glm(A ~ X, data=to_fit, family='binomial')
+prop.fit<-predict(fit, type="response")
+rm(fit)
+
+set.seed(47)
+
+res0 <- CFsurvival::CFsurvival(
+  time = to_fit$Y, 
+  event = to_fit$DeltaY, 
+  treat = to_fit$A, 
+  confounders = to_fit %>% dplyr::select(X),
+  fit.times = sort(unique(to_fit$Y[to_fit$Y>0])), 
+  fit.treat = c(0,1), 
+  nuisance.options = CFsurvival.nuisance.options(
+          cross.fit = TRUE,
+          V = 5,
+          folds = NULL,
+          eval.times = NULL,
+          event.SL.library = c("survSL.km", 
+                               "survSL.coxph", 
+                               "survSL.expreg"),
+          event.pred.0 = NULL,
+          event.pred.1 = NULL,
+          cens.SL.library = c("survSL.km", 
+                              "survSL.coxph", 
+                              "survSL.expreg"),
+          cens.trunc = 0,
+          cens.pred.0 = NULL,
+          cens.pred.1 = NULL,
+          survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+          survSL.cvControl = list(V = 5),
+          save.nuis.fits = FALSE,
+          prop.SL.library = NULL,
+          prop.trunc = 0,
+          prop.pred = prop.fit,
+          verbose = TRUE
+        ), 
+        conf.band = FALSE, 
+        conf.level = 0.95, 
+        contrasts = c("risk.ratio"), 
+        verbose = TRUE
+)
+
+gc()
+
+set.seed(47)
+
+source("./CFSurvival_funcs.r")
+source("./survSuperLearner_funcs.r")
+
+res2 <- CFsurvival3(
+  time = to_fit$Y, 
+  event = to_fit$DeltaY, 
+  treat = to_fit$A, 
+  W = to_fit %>% dplyr::select(X),
+  time_N = to_fit$N1,
+  event_N = to_fit$DeltaN1,
+  information_level = 2, 
+  admin_t = to_fit$admin_t, 
+  id = to_fit$ptid, 
+  fit.times = sort(unique(to_fit$Y[to_fit$Y>0])), 
+  fit.treat = c(0,1), 
+  nuisance.options = CFsurvival.nuisance.options(
+          cross.fit = TRUE,
+          V = 5,
+          folds = NULL,
+          eval.times = NULL,
+          event.SL.library = c("survSL.km", 
+                               "survSL.coxph", 
+                               "survSL.expreg"),
+          event.pred.0 = NULL,
+          event.pred.1 = NULL,
+          cens.SL.library = c("survSL.km", 
+                              "survSL.coxph", 
+                              "survSL.expreg"),
+          cens.trunc = 0,
+          cens.pred.0 = NULL,
+          cens.pred.1 = NULL,
+          survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+          survSL.cvControl = list(V = 5),
+          save.nuis.fits = FALSE,
+          prop.SL.library = NULL,
+          prop.trunc = 0,
+          prop.pred = prop.fit,
+          verbose = TRUE
+        ), 
+        conf.band = FALSE, 
+        conf.level = 0.95, 
+        contrasts = c("risk.ratio"), 
+        verbose = TRUE
+)
+
+gc()
+
+W <- to_fit_1 %>% dplyr::select(X,URM,agegrp)
+#colnames(W) <- c("X1", "X2")
+W <- model.matrix(~X + agegrp + URM - 1, data=W) %>% as.data.frame()
+colnames(W)<-paste0("W", 1:ncol(W))
+
+res2.5 <- CFsurvival3(
+  time = to_fit_1$Y, 
+  event = to_fit_1$DeltaY, 
+  treat = to_fit_1$A, 
+  W = W,
+  time_N = to_fit_1$N1,
+  event_N = to_fit_1$DeltaN1,
+  information_level = 2, 
+  admin_t = to_fit_1$admin_t, 
+  id = to_fit_1$ptid, 
+  fit.times = sort(unique(to_fit_1$Y[to_fit_1$Y>0])), 
+  fit.treat = c(0,1), 
+  nuisance.options = CFsurvival.nuisance.options(
+          cross.fit = TRUE,
+          V = 5,
+          folds = NULL,
+          eval.times = NULL,
+          event.SL.library = lapply(c("survSL.km", 
+                               "survSL.coxph", 
+                               "survSL.rfsrc"), function(alg)
+    c(alg, "survscreen.glmnet", "All")),
+          event.pred.0 = NULL,
+          event.pred.1 = NULL,
+          cens.SL.library = lapply(c("survSL.km", 
+                               "survSL.coxph", 
+                               "survSL.rfsrc"), function(alg)
+    c(alg, "survscreen.glmnet", "All")),
+          cens.trunc = 0,
+          cens.pred.0 = NULL,
+          cens.pred.1 = NULL,
+          survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+          survSL.cvControl = list(V = 5),
+          save.nuis.fits = FALSE,
+          prop.SL.library = NULL,
+          prop.trunc = 0,
+          prop.pred = prop.fit,
+          verbose = TRUE
+        ), 
+        conf.band = FALSE, 
+        conf.level = 0.95, 
+        contrasts = c("risk.ratio"), 
+        verbose = TRUE
+)
+
+gc()
+
+res3 <- CFsurvival3(
+  time = to_fit$Y, 
+  event = to_fit$DeltaY, 
+  treat = to_fit$A, 
+  W = to_fit %>% dplyr::select(X),
+  time_N = to_fit$N1,
+  event_N = to_fit$DeltaN1,
+  information_level = 3, 
+  admin_t = to_fit$admin_t, 
+  id = to_fit$ptid, 
+  fit.times = sort(unique(to_fit$Y[to_fit$Y>0])), 
+  fit.treat = c(0,1), 
+  nuisance.options = CFsurvival.nuisance.options(
+          cross.fit = TRUE,
+          V = 8,
+          folds = NULL,
+          eval.times = NULL,
+          event.SL.library = c("survSL.km", 
+                               "survSL.coxph", 
+                               "survSL.expreg"),
+          event.pred.0 = NULL,
+          event.pred.1 = NULL,
+          cens.SL.library = c("survSL.km", 
+                              "survSL.coxph", 
+                              "survSL.expreg"),
+          cens.trunc = 0,
+          cens.pred.0 = NULL,
+          cens.pred.1 = NULL,
+          survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+          survSL.cvControl = list(V = 5),
+          save.nuis.fits = FALSE,
+          prop.SL.library = NULL,
+          prop.trunc = 0,
+          prop.pred = prop.fit,
+          verbose = TRUE
+        ), 
+        conf.band = FALSE, 
+        conf.level = 0.95, 
+        contrasts = c("risk.ratio"), 
+        verbose = TRUE, maxiter=3
+)
+```
+
+```{r}
+unadj <- data.frame(
+  time = 104*7, 
+  log.risk.ratio = log(event_prob[2]/event_prob[1]),
+  risk.ratio = event_prob[2]/event_prob[1],
+  se.log.ratio = msm::deltamethod(~log((1-x2)/(1-x1)), mean=1-event_prob, cov=diag(res_KM$std.err^2), ses = TRUE)
+) %>%
+mutate(
+  ptwise.lower.log = log.risk.ratio - qnorm(0.975) * se.log.ratio,
+  ptwise.upper.log = log.risk.ratio + qnorm(0.975) * se.log.ratio
+) %>%
+  mutate(ptwise.lower = exp(ptwise.lower.log),
+         ptwise.upper = exp(ptwise.upper.log))
+
+bind_rows(
+  unadj %>% mutate(name="KM"),
+  res0$risk.ratio.df %>% filter(time==7*104) %>% mutate(name="X-adj"),
+  res2$risk.ratio.df %>% filter(time==7*104) %>% mutate(name="NCI-adj"),
+  res2.5$risk.ratio.df %>% filter(time==7*104) %>% mutate(name="NCI-adj (2)"),
+  #res3$risk.ratio.df %>% filter(time==7*104) %>% mutate(name="NCI-adj")
+) %>%
+  mutate(releff = (se.log.ratio/se.log.ratio[name=="KM"])^2)
+
+```
+
+
+# Previous/Depreciated
+
+#### Adjustment MLE
+
+Prelim 
+
+```{r}
+infs <- dat_704_rgc %>% 
+  mutate(ptid=as.character(ptid)) %>% 
+  filter(test=="rectal") %>%
+  dplyr::group_by(ptid) %>%
+  dplyr::summarise(
+    max_date = max(ymd(visitdt), na.rm=TRUE),
+    dt1 = case_when(
+      any(value==2, na.rm=TRUE) ~  min(ymd(visitdt[value==2]), na.rm=TRUE),
+      .default = NA),
+    delta1 = case_when(
+      any(value==2, na.rm=TRUE) ~ 1,
+      .default = 0),
+    dt1 = pmin(dt1, max_date, na.rm=TRUE)
+  ) %>%
+  ungroup()
+
+dat_704_assess <- left_join(dat_704_hiv %>% 
+                              dplyr::select(ptid, 
+                                            rx_code, 
+                                            rx_pool, 
+                                            MITT_flag, 
+                                            efficacy_flag, 
+                                            enrdt, 
+                                            fudtwk104, 
+                                            fudayswk104, 
+                                            statuswk104), infs, by="ptid")
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, 
+                            master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+dat_704_assess <- left_join(dat_704_assess, drop %>% dplyr::select(ptid, dropoutwk104dt, dropoutwk104days, dropoutwk104))
+
+#Step 4: define end date variable and event indicator
+# If no HIV-1 infection, take minimum 
+
+dat_704_assess <- dat_704_assess %>%
+    mutate(across(.cols = starts_with('dt'),
+                  ~ (as.numeric(difftime(.x, dmy(enrdt), units="days"))),
+                  .names = "{.col}_TTE")
+  )
+
+# Filter for MITT and primary efficacy flag participant
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+dat_704_assess$A <- ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+
+T.names <- c("fu_year_wk104", colnames(dat_704_assess)[grepl("_TTE", colnames(dat_704_assess))])
+D.names <- c("statuswk104", colnames(dat_704_assess)[grepl("delta", colnames(dat_704_assess))])
+
+fit<-CFsurvival::CFsurvival(time = dat_704_assess$fudayswk104,
+                       event = dat_704_assess$statuswk104, 
+                       treat = dat_704_assess$A, 
+                       confounders = dat_704_assess %>% 
+                         dplyr::select(ends_with('TTE'), starts_with("delta")) %>%
+                         as.matrix(), 
+                       fit.times = sort(c(unique(dat_704_assess$fudayswk104))), 
+                       conf.band = FALSE, 
+                       contrasts = "risk.ratio", 
+                       nuisance.options = list(
+                         cross.fit=TRUE,
+                         V=5,
+                         event.SL.library = lapply(c("survSL.km", 
+                                                     "survSL.coxph", 
+                                                     "survSL.expreg",
+                                                     "survSL.weibreg", 
+                                                     "survSL.loglogreg"), 
+                                                     #"survSL.gam", 
+                                                     #"survSL.rfsrc"), 
+                                                   function(alg)
+                                                       c(alg, "survscreen.glmnet", "survscreen.marg", "All")),
+                         cens.SL.library = "survSL.km",
+                         prop.pred = rep(mean(dat_704_assess$A), nrow(dat_704_assess))
+                       )
+                      )
+
+#
+fit$risk.ratio.df %>% filter(time==7*104)
+
+KM_est(T.name = "fudayswk104", Delta.name="statuswk104", A.name = "A", dat = dat_704_assess, eval_t = 104*7)
+```
+
+#### Adjustment
+
+```{r}
+rgc <- dat_704_rgc %>% 
+  mutate(ptid=as.character(ptid)) %>% filter(test=="rectal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>% ungroup() %>%
+  dplyr::select(ptid, visitdt, value) %>%
+  rename(
+    dt1 = visitdt,
+    delta1 = value
+  )
+
+ogc <- dat_704_rgc %>% 
+  mutate(ptid=as.character(ptid)) %>% filter(test=="oropharyngeal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>% ungroup() %>%
+  dplyr::select(ptid, visitdt, value) %>%
+  rename(
+    dt2 = visitdt,
+    delta2 = value
+  )
+
+ugc <- dat_704_rgc %>% 
+  mutate(ptid=as.character(ptid)) %>% filter(test=="urine" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>% ungroup() %>%
+  dplyr::select(ptid, visitdt, value) %>%
+  rename(
+    dt3 = visitdt,
+    delta3 = value
+  )
+
+rchlamy <- dat_704_sti %>% 
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="C. trachomatis" & test=="rectal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>% ungroup() %>%
+  dplyr::select(ptid, visitdt, value) %>%
+  rename(
+    dt4 = visitdt,
+    delta4 = value
+  )
+
+uchlamy <- dat_704_sti %>% 
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="C. trachomatis" & test=="urine" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>% ungroup() %>%
+  dplyr::select(ptid, visitdt, value) %>%
+  rename(
+    dt5 = visitdt,
+    delta5 = value
+  )
+
+syph_t <- dat_704_sti %>% 
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="Syphilis" & test=="treponemal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>% ungroup() %>%
+  dplyr::select(ptid, visitdt, value) %>%
+  rename(
+    dt6 = visitdt,
+    delta6 = value
+  )
+
+syph_non_t <- dat_704_sti %>% 
+  mutate(ptid=as.character(ptid)) %>% filter(sti=="Syphilis" & test=="non-treponemal" & value==2) %>%
+  group_by(ptid) %>%
+  slice(which.min(visit)) %>% ungroup() %>%
+  dplyr::select(ptid, visitdt, value) %>%
+  rename(
+    dt7 = visitdt,
+    delta7 = value
+  )
+
+#
+
+infs <- full_join(full_join(full_join(full_join(full_join(full_join(rgc, ogc), ugc), rchlamy), uchlamy), syph_t), syph_non_t)
+
+dat_704_assess <- left_join(dat_704_hiv %>% dplyr::select(ptid, rx_code, rx_pool, MITT_flag, efficacy_flag, enrdt, fudtwk104, fu_year_wk104, statuswk104), infs, by="ptid")
+
+#Step 3: join other datasets such as demographics and BRS
+
+dat_704_assess <- left_join(dat_704_assess, 
+                            master %>% dplyr::select(ptid, site, age, agegrp, race, ethnicity, termdt, discdt), by="ptid")
+
+dat_704_assess  <- left_join(dat_704_assess, rbind(vacc_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid)),  placebo_rs %>% dplyr::select(usubjid, standardized_risk_score) %>% mutate(usubjid=as.character(usubjid))), by=c("ptid"="usubjid"))
+dat_704_assess$standardized_risk_score<-ifelse(is.na(dat_704_assess$standardized_risk_score), 0, dat_704_assess$standardized_risk_score)
+
+#Step 4: define end date variable and event indicator
+# If no HIV-1 infection, take minimum 
+
+dat_704_assess <- dat_704_assess %>%
+    mutate(across(.cols = starts_with("dt"), 
+                  ~ case_when(
+                    statuswk104==0 ~ pmin(ymd(.x), dmy(fudtwk104), dmy(termdt), na.rm=TRUE),
+                    statuswk104==1 & is.na(dmy(termdt)) ~ pmin(ymd(.x), dmy(fudtwk104), dmy(termdt), na.rm=TRUE),
+                    statuswk104==1 & !is.na(dmy(termdt)) ~ pmin(ymd(.x), dmy(termdt), na.rm=TRUE)
+                  )
+                  ),
+           across(.cols = starts_with("delta"),
+                  ~ ifelse(is.na(.x), 0, 1)),
+           across(.cols = starts_with('dt'),
+                  ~ (as.numeric(difftime(.x, dmy(enrdt), units="days")))/365.25,
+                  .names = "{.col}_TTE")
+  )
+
+# Filter for MITT and primary efficacy flag participant
+dat_704_assess <- dat_704_assess %>% filter(MITT_flag==1 & efficacy_flag==1)
+
+dat_704_assess$A <- ifelse(dat_704_assess$rx_pool=="C3", 0, 1)
+
+T.names <- c("fu_year_wk104", colnames(dat_704_assess)[grepl("_TTE", colnames(dat_704_assess))])
+D.names <- c("statuswk104", colnames(dat_704_assess)[grepl("delta", colnames(dat_704_assess))])
+
+# Next step administratively censor at 2 years
+admin_t = 2
+
+for(i in 1:length(T.names)){
+  
+  dat_704_assess[[D.names[i]]]<-ifelse(dat_704_assess[[T.names[i]]] <= admin_t,
+                                       dat_704_assess[[D.names[i]]], 0)
+  dat_704_assess[[T.names[i]]]<-pmin(dat_704_assess[[T.names[i]]], admin_t)+(1/365.25)
+}
+
+admin_t = admin_t + 1/(365.25)
+
+#gs <- multivariate_gibbs_sampling(dat=dat_704_assess %>% dplyr::select(A, fu_year_wk104, statuswk104, ends_with("_TTE"),starts_with("delta")), T.names = T.names, Delta.names = D.names, primary_outcome_indx = 1, A.name = "A", burn_in = 100, MC_samples = 50, verbose = TRUE, admin_t=admin_t)
+
+gs <- multivariate_gibbs_sampling_speedup(
+  dat=dat_704_assess %>% dplyr::select(A, fu_year_wk104, statuswk104, ends_with("_TTE"),starts_with("delta")), 
+  T.names = T.names, 
+  Delta.names = D.names, 
+  primary_outcome_indx = 1, 
+  A.name = "A", 
+  burn_in = 40, 
+  MC_samples = 20, 
+  verbose = TRUE, 
+  admin_t=admin_t, 
+  predictor_transform = "identity", 
+  kern_shape = "gaussian",
+  bw = 0.5)
+
+adj<-NCI_adj(imputed_datasets = gs, 
+        indices_to_analyze = seq(41, 61), 
+        Y.name=T.names[1], 
+        A.name="A", 
+        adj_vars=c(T.names[-c(1,3)]), 
+        eval_t=admin_t, 
+        calibrate = TRUE, SL = FALSE)
+
+unadj<-KM_est(dat= dat_704_assess, T.name=T.names[1], Delta.name = D.names[1], A.name = "A", eval_t = admin_t)
+
+adj$var_logRR/unadj$logRR_var
+```
+
+```{r}
+library(CFsurvival)
+
+fit<-CFsurvival::CFsurvival(time = dat_704_assess$fu_year_wk104,
+                       event = dat_704_assess$statuswk104, 
+                       treat = dat_704_assess$A, 
+                       confounders = dat_704_assess %>% 
+                         dplyr::select(ends_with('TTE'), starts_with("delta")) %>%
+                         dplyr::select(-c("dt2_TTE", "delta2")) %>%
+                         as.matrix(), 
+                       fit.times = sort(c(unique(dat_704_assess$fu_year_wk104))), 
+                       conf.band = FALSE, 
+                       contrasts = "risk.ratio", 
+                       nuisance.options = list(
+                         cross.fit=TRUE,
+                         event.SL.library = lapply(c("survSL.km", 
+                                                     "survSL.coxph", 
+                                                     "survSL.expreg",
+                                                     "survSL.weibreg", 
+                                                     "survSL.loglogreg", 
+                                                     "survSL.gam", 
+                                                     "survSL.rfsrc"), function(alg)
+                                                       c(alg, "survscreen.glmnet", "survscreen.marg", "All")),
+                         cens.SL.library = "survSL.km",
+                         prop.pred = rep(mean(dat_704_assess$A), nrow(dat_704_assess))
+                       )
+                      )
+
+fit_2<-CFsurvival::CFsurvival(time = dat_704_assess$fu_year_wk104,
+                       event = dat_704_assess$statuswk104, 
+                       treat = dat_704_assess$A, 
+                       confounders = dat_704_assess %>% dplyr::select(standardized_risk_score) %>% as.matrix(), 
+                       fit.times = sort(c(unique(dat_704_assess$fu_year_wk104))), 
+                       conf.band = FALSE, 
+                       contrasts = "risk.ratio", 
+                       nuisance.options = list(
+                         cross.fit=TRUE,
+                         event.SL.library = lapply(c("survSL.km", 
+                                                     "survSL.coxph", 
+                                                     "survSL.expreg",
+                                                     #"survSL.weibreg", 
+                                                     #"survSL.loglogreg", 
+                                                     #"survSL.gam", 
+                                                     "survSL.rfsrc"), function(alg)
+                                                       c(alg, "All")),
+                         cens.SL.library = "survSL.km",
+                         prop.pred = rep(mean(dat_704_assess$A), nrow(dat_704_assess))
+                       )
+                      )
+
+fit_3<-CFsurvival::CFsurvival(time = dat_704_assess$fu_year_wk104,
+                       event = dat_704_assess$statuswk104, 
+                       treat = dat_704_assess$A, 
+                       confounders = matrix(1, nrow=nrow(dat_704_assess), ncol=1), 
+                       fit.times = sort(c(unique(dat_704_assess$fu_year_wk104))), 
+                       conf.band = FALSE, 
+                       contrasts = "risk.ratio", 
+                       nuisance.options = list(
+                         cross.fit=FALSE,
+                         event.SL.library = "survSL.km",
+                         cens.SL.library = "survSL.km",
+                         prop.pred = rep(mean(dat_704_assess$A), nrow(dat_704_assess))
+                       )
+                      )
+
+unadj<-KM_est(dat= dat_704_assess, T.name=T.names[1], Delta.name = D.names[1], A.name = "A", eval_t = 1.995893)
+```
+

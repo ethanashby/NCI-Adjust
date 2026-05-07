@@ -1,14 +1,29 @@
-library(CFsurvival,
-        lib.loc=c("/home/eashby/R_lib"))
 library(SimEngine,
         lib.loc=c("/home/eashby/R_lib"))
+library(survival,
+        lib.loc=c("/home/eashby/R_lib"))
+library(Matrix,
+        lib.loc=c("/home/eashby/R_lib"))
+library(glmnet,
+        lib.loc=c("/home/eashby/R_lib"))
+library(mgcv,
+        lib.loc=c("/home/eashby/R_lib"))
+library(randomForestSRC,
+        lib.loc=c("/home/eashby/R_lib"))
+library(gam)
+library(nnls)
+library(Rsolnp,
+        lib.loc=c("/home/eashby/R_lib"))
+library(SuperLearner, lib.loc=c("/home/eashby/R_lib"))
 library(survSuperLearner,
+        lib.loc=c("/home/eashby/R_lib"))
+library(CFsurvival,
         lib.loc=c("/home/eashby/R_lib"))
 library(copula,
         lib.loc=c("/home/eashby/R_lib"))
+library(msm,
+        lib.loc=c("/home/eashby/R_lib"))
 library(tidyverse)
-library(survival)
-library(msm)
 library(parallel)
 library(progress)
 
@@ -21,37 +36,36 @@ run_on_cluster(
     sim<-new_sim()
     
     sim %<>% set_levels(
-      n=c(2000, 3500),
+      n=c(2000),
       trt_prob=0.5,
       RR = c(0.75), #25% efficacy
       RR_C = c(1),
-      per_year_incidence_Y = c(0.05),
+      per_year_incidence_Y = c(0.06),
       per_year_incidence_N = c(0.12),
-      per_year_incidence_C = c(0.05, 0.10, 0.20),
+      #per_year_incidence_C = c(0.05, 0.10, 0.20, 0.30),
+      per_year_incidence_C = c(0.10),
       J=1,
-      rho=c(0, 0.5, 0.75, 0.9),
+      rho=c(0, 0.5, 0.8),
       X = TRUE,
-      rho_X = c(0.1, 0.5),
+      #rho_X = c(0.1, 0.5),
+      rho_X = c(0.1),
       admin_date = 2
     )
     
-    sim %<>% set_levels(.keep=
-                          unique(
-                            c(
-                              which(sim$levels_grid$per_year_incidence_C==0.10), # Help me understand influence of prognostic N versus X
-                              which(sim$levels_grid$rho_X==0.1 & sim$levels_grid$rho==0.75 & sim$levels_grid$n==2000) # Help me understand impact of coarsening versus prognostic N
-                              )
-                            ))
+    # sim %<>% set_levels(.keep=
+    #                       unique(
+    #                         c(
+    #                           which(sim$levels_grid$per_year_incidence_C==0.10), # Help me understand influence of prognostic N versus X
+    #                           which(sim$levels_grid$rho_X==0.1 & sim$levels_grid$rho==0.75 & sim$levels_grid$n==2000) # Help me understand impact of coarsening versus prognostic N
+    #                           )
+    #                         ))
     
     sim %<>% set_script(function(){
       
       source("create_multivar_survival.r")
       source("CFSurvival_funcs.r")
       source("survSuperLearner_funcs.r")
-      source("AIPWCC.r")
-      
-      L<-sim$levels_grid[6,]
-      L$n<-1200
+      source("AIPWCC_fix.r")
       
       data <- create_multivar_survival(n=L$n, 
                                        trt_prob=L$trt_prob, 
@@ -144,13 +158,15 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
         conf.band=FALSE, 
         conf.level=.95, 
         contrasts = c("risk.ratio"), 
-        verbose=TRUE,
+        verbose=TRUE, 
+        fit_marg_FN = FALSE,
         nuisance.options = CFsurvival.nuisance.options(
           cross.fit = TRUE,
-          V = 5,
+          V = 10,
           folds = NULL,
-          #eval.times = quantile(unique(data$N1), seq(0,1,length.out=101)),
-          eval.times = sort(unique(c(data$N1[data$N1>0]))),
+          #eval.times = sort(unique(c(data$N1[data$N1>0]))),
+          #eval.times = seq(min(data$N1[data$N1>0 & data$N1 < c(2*365) & data$DeltaN1==1]), max(data$N1[data$N1>0 & data$N1 < c(2*365) & data$DeltaN1==1])),
+          eval.times = sort(unique(data$N1[data$N1>0 & data$N1 < c(2*365)])),
           event.SL.library = c("survSL.km", 
                                "survSL.coxph", 
                                "survSL.expreg"),
@@ -173,8 +189,8 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
       )
       
       results <- bind_rows(results,
-                           data.frame("logRR"=est1$risk.ratio.df$log.risk.ratio[est1$risk.ratio.df$time==max(data$Y[data$DeltaY==1])], 
-                                      "logRR_var"=(est1$risk.ratio.df$se.log.ratio[est1$risk.ratio.df$time==max(data$Y[data$DeltaY==1])])^2, 
+                           data.frame("logRR"=est1$risk.ratio$log.risk.ratio[est1$risk.ratio$time==max(data$Y[data$DeltaY==1])], 
+                                      "logRR_var"=(est1$risk.ratio$se.log.ratio[est1$risk.ratio$time==max(data$Y[data$DeltaY==1])])^2, 
                                       "type"="NCI-Adj")
       ) 
     
@@ -186,8 +202,8 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
           bias = logRR - log(L$RR),
           releff = logRR_var/logRR_var[type=="KM"],
           cover = as.numeric(between(rep(log(L$RR), nrow(results)), 
-                                     logRR - qnorm(0.975) * sqrt(logRR_var), 
-                                     logRR + qnorm(0.975) * sqrt(logRR_var)))
+                                     logRR - qt(1-(1-0.95)/2, L$n - 1) * sqrt(logRR_var), 
+                                     logRR + qt(1-(1-0.95)/2, L$n- 1) * sqrt(logRR_var)))
         )
       
       return(
@@ -199,7 +215,7 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
     })
     
     
-    sim %<>% set_config(num_sim=10, 
+    sim %<>% set_config(num_sim=1000, 
                         seed=47,
                         stop_at_error=TRUE,
                         n_cores = n_cores)
@@ -211,7 +227,7 @@ data.frame("logRR"=tail(est0$risk.ratio.df$log.risk.ratio, 1),
   },
   
   last = {
-    
+    sim
   },
   
   cluster_config = list(js="slurm")

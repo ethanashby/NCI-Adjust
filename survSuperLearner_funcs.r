@@ -42,13 +42,13 @@
 survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, newX_cens = NULL, new.times, event.SL.library, cens.SL.library, id = NULL, verbose = FALSE, control = list(), cvControl = list(), obsWeights = NULL)  {
   
   # Check to see if required packages are installed
-  packages <- c("survival", "mgcv", "randomForestSRC", "glmnet", "SuperLearner",
-                "nnls", "Rsolnp")
-  for (pkg in packages) {
-    if (!requireNamespace(pkg, quietly=TRUE)) {
-      stop(paste0("Package '", pkg, "' is required by survSuperLearner."))
-    }
-  }
+  # packages <- c("survival", "mgcv", "randomForestSRC", "glmnet", "SuperLearner",
+  #               "nnls", "Rsolnp")
+  # for (pkg in packages) {
+  #   if (!requireNamespace(pkg, quietly=TRUE)) {
+  #     stop(paste0("Package '", pkg, "' is required by survSuperLearner."))
+  #   }
+  # }
   
   time_start <- proc.time()
   call <- match.call(expand.dots = TRUE)
@@ -399,78 +399,78 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
 #' \item{event.SL.predict, cens.SL.predict}{\code{m x k} matrices of SuperLearner predicted survival values. Rows index observations in \code{newX}; columns index times in \code{new.times.}}
 #' \item{event.coef, cens.coef}{Fitted SuperLearner coefficients for the model for the conditional survival functions for the event and censoring times, respectively.}
 
-predict.survSuperLearner <- function (object, newdata_event, newdata_cens, new.times, X_event = NULL, X_cens = NULL, time = NULL, event = NULL, onlySL = FALSE, threshold = 1e-4, ...) {
-  if (missing(newdata)) {
-    out <- list(survpred = object$survSL.predict, cens.pred = object$cens.SL.predict,
-                survlibrary.predict = object$survlibrary.predict, cens.library.predict = object$cens.library.predict)
-    return(out)
-  }
-  if (!object$control$saveFitLibrary) {
-    stop("This SuperLearner fit was created using control$saveFitLibrary = FALSE, so new predictions cannot be made.")
-  }
-  event.k <- nrow(object$event.libraryNames)
-  event.pred <- array(0, dim=c(nrow(newdata), length(new.times), event.k))
-  dimnames(event.pred)[[3]] <- apply(object$event.libraryNames, 1, paste, collapse = '_')
-  dimnames(event.pred)[[2]] <- new.times
-  
-  cens.k <- nrow(object$cens.libraryNames)
-  cens.pred <- array(0, dim=c(nrow(newdata), length(new.times), cens.k))
-  dimnames(cens.pred)[[3]] <- apply(object$cens.libraryNames, 1, paste, collapse = '_')
-  dimnames(cens.pred)[[2]] <- new.times
-  if (onlySL) {
-    event.whichLibrary <- which(object$event.coef > threshold)
-    event.coef <- object$event.coef
-    event.coef[-event.whichLibrary] <- 0
-    event.coef <- event.coef / sum(event.coef)
-    
-    cens.whichLibrary <- which(object$cens.coef > threshold)
-    cens.coef <- object$cens.coef
-    cens.coef[-cens.whichLibrary] <- 0
-    cens.coef <- cens.coef / sum(cens.coef)
-  } else {
-    event.whichLibrary <- seq(event.k)
-    event.coef <- object$event.coef
-    cens.whichLibrary <- seq(cens.k)
-    cens.coef <- object$cens.coef
-  }
-  for (mm in event.whichLibrary) {
-    newdataMM <- subset(newdata_event,
-                        select = object$event.whichScreen[object$event.SL.library$library[mm, 2], ])
-    XMM <- if (is.null(X_event)) {
-      NULL
-    } else {
-      subset(X_event, select = object$event.whichScreen[object$event.SL.library$library[mm, 2], ])
-    }
-    event.pred[, ,mm] <- do.call("predict", list(object = object$event.fitLibrary[[mm]],
-                                                 newX = newdataMM, new.times = new.times,
-                                                 X = XMM, time = time, event = event, ...))
-  }
-  event.SL.predict <- matrix(NA, nrow = nrow(newdata_event), ncol=length(new.times))
-  for (j in seq(length(new.times))) {
-    event.SL.predict[,j] <- event.pred[,j,] %*% event.coef
-  }
-  
-  for (mm in cens.whichLibrary) {
-    newdataMM <- subset(newdata_cens,
-                        select = object$cens.whichScreen[object$cens.SL.library$library[mm, 2], ])
-    XMM <- if (is.null(X_cens)) {
-      NULL
-    } else {
-      subset(X_cens, select = object$cens.whichScreen[object$cens.SL.library$library[mm, 2], ])
-    }
-    cens.pred[, ,mm] <- do.call("predict", list(object = object$cens.fitLibrary[[mm]],
-                                                newX = newdataMM, new.times = new.times,
-                                                X = XMM, time = time, event = event, ...))
-  }
-  cens.SL.predict <- matrix(NA, nrow = nrow(newdata), ncol=length(new.times))
-  for (j in seq(length(new.times))) {
-    cens.SL.predict[,j] <- cens.pred[,j,] %*% cens.coef
-  }
-  
-  out <- list(event.SL.predict = event.SL.predict, event.library.predict = event.pred,
-              cens.SL.predict = cens.SL.predict, cens.library.predict = cens.pred)
-  return(out)
-}
+# predict.survSuperLearner <- function (object, newdata_event, newdata_cens, new.times, X_event = NULL, X_cens = NULL, time = NULL, event = NULL, onlySL = FALSE, threshold = 1e-4, ...) {
+#   if (missing(newdata)) {
+#     out <- list(survpred = object$survSL.predict, cens.pred = object$cens.SL.predict,
+#                 survlibrary.predict = object$survlibrary.predict, cens.library.predict = object$cens.library.predict)
+#     return(out)
+#   }
+#   if (!object$control$saveFitLibrary) {
+#     stop("This SuperLearner fit was created using control$saveFitLibrary = FALSE, so new predictions cannot be made.")
+#   }
+#   event.k <- nrow(object$event.libraryNames)
+#   event.pred <- array(0, dim=c(nrow(newdata), length(new.times), event.k))
+#   dimnames(event.pred)[[3]] <- apply(object$event.libraryNames, 1, paste, collapse = '_')
+#   dimnames(event.pred)[[2]] <- new.times
+#   
+#   cens.k <- nrow(object$cens.libraryNames)
+#   cens.pred <- array(0, dim=c(nrow(newdata), length(new.times), cens.k))
+#   dimnames(cens.pred)[[3]] <- apply(object$cens.libraryNames, 1, paste, collapse = '_')
+#   dimnames(cens.pred)[[2]] <- new.times
+#   if (onlySL) {
+#     event.whichLibrary <- which(object$event.coef > threshold)
+#     event.coef <- object$event.coef
+#     event.coef[-event.whichLibrary] <- 0
+#     event.coef <- event.coef / sum(event.coef)
+#     
+#     cens.whichLibrary <- which(object$cens.coef > threshold)
+#     cens.coef <- object$cens.coef
+#     cens.coef[-cens.whichLibrary] <- 0
+#     cens.coef <- cens.coef / sum(cens.coef)
+#   } else {
+#     event.whichLibrary <- seq(event.k)
+#     event.coef <- object$event.coef
+#     cens.whichLibrary <- seq(cens.k)
+#     cens.coef <- object$cens.coef
+#   }
+#   for (mm in event.whichLibrary) {
+#     newdataMM <- subset(newdata_event,
+#                         select = object$event.whichScreen[object$event.SL.library$library[mm, 2], ])
+#     XMM <- if (is.null(X_event)) {
+#       NULL
+#     } else {
+#       subset(X_event, select = object$event.whichScreen[object$event.SL.library$library[mm, 2], ])
+#     }
+#     event.pred[, ,mm] <- do.call("predict", list(object = object$event.fitLibrary[[mm]],
+#                                                  newX = newdataMM, new.times = new.times,
+#                                                  X = XMM, time = time, event = event, ...))
+#   }
+#   event.SL.predict <- matrix(NA, nrow = nrow(newdata_event), ncol=length(new.times))
+#   for (j in seq(length(new.times))) {
+#     event.SL.predict[,j] <- event.pred[,j,] %*% event.coef
+#   }
+#   
+#   for (mm in cens.whichLibrary) {
+#     newdataMM <- subset(newdata_cens,
+#                         select = object$cens.whichScreen[object$cens.SL.library$library[mm, 2], ])
+#     XMM <- if (is.null(X_cens)) {
+#       NULL
+#     } else {
+#       subset(X_cens, select = object$cens.whichScreen[object$cens.SL.library$library[mm, 2], ])
+#     }
+#     cens.pred[, ,mm] <- do.call("predict", list(object = object$cens.fitLibrary[[mm]],
+#                                                 newX = newdataMM, new.times = new.times,
+#                                                 X = XMM, time = time, event = event, ...))
+#   }
+#   cens.SL.predict <- matrix(NA, nrow = nrow(newdata), ncol=length(new.times))
+#   for (j in seq(length(new.times))) {
+#     cens.SL.predict[,j] <- cens.pred[,j,] %*% cens.coef
+#   }
+#   
+#   out <- list(event.SL.predict = event.SL.predict, event.library.predict = event.pred,
+#               cens.SL.predict = cens.SL.predict, cens.library.predict = cens.pred)
+#   return(out)
+# }
 
 # Functionn which checks inputs to survSuperLearner2
 .checkInputs <- function(time, event, X_event, newX_event, X_cens, newX_cens, id, obsWeights, verbose) {
@@ -771,8 +771,12 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
     
     G.coef <- rep(0, cens.k)
     G.coef[!cens.errorsInLibrary] <- .survcomputeCoef_stream(
-      time = time, event = 1 - event, t.grid = control$cens.t.grid, cens.vals = obs.event.vals,
-      Z= cens.Z[, , !cens.errorsInLibrary, drop = FALSE], obsWeights = obsWeights)
+      time = time, 
+      event = 1 - event, 
+      t.grid = control$cens.t.grid, 
+      cens.vals = obs.event.vals,
+      Z= cens.Z[, , !cens.errorsInLibrary, drop = FALSE], 
+      obsWeights = obsWeights)
     
     obs.cens.vals <- as.numeric(cens.Z.obs %*% G.coef)
     #obs.cens.vals <- rep(c(cens.Z.obs %*% G.coef), length(control$event.t.grid))
