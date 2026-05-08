@@ -30,121 +30,46 @@ AIPWCC_newEIF_em <- function(
     logN             = TRUE
 ) {
   
-  CFsurvival.nuis.opt <- function(cross.fit = TRUE, V = ifelse(cross.fit, 10, 1), folds = NULL, eval.times = NULL,
-                                  event.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg", "survSL.weibreg", "survSL.loglogreg", "survSL.gam", "survSL.rfsrc"), function(alg) c(alg, "survscreen.glmnet", "survscreen.marg", "All") ),  event.pred.0 = NULL, event.pred.1 = NULL,
-                                  event.SL.library_SY = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg", "survSL.weibreg", "survSL.loglogreg", "survSL.gam", "survSL.rfsrc"), function(alg) c(alg, "survscreen.glmnet", "survscreen.marg", "All") ),
-                                  cens.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg", "survSL.weibreg", "survSL.loglogreg", "survSL.gam", "survSL.rfsrc"), function(alg) c(alg, "survscreen.glmnet", "survscreen.marg", "All") ),  cens.trunc=0, cens.pred.0 = NULL, cens.pred.1 = NULL,
-                                  survSL.control = list(initWeightAlg = "survSL.rfsrc", verbose=FALSE), survSL.cvControl = list(V = 10), save.nuis.fits = FALSE,
-                                  prop.SL.library = lapply(c("SL.mean", "SL.glm", "SL.gam", "SL.earth", "SL.ranger", "SL.xgboost"), function(alg) c(alg, "screen.glmnet", "screen.corRank", "All") ), prop.trunc=0, prop.pred = NULL,
-                                  verbose=FALSE) {
-    list(cross.fit = cross.fit, V = V, folds = folds, eval.times = eval.times,
-         event.SL.library = event.SL.library, event.pred.0 = event.pred.0, event.pred.1 = event.pred.1,
-         cens.SL.library = cens.SL.library, 
-         event.SL.library_SY = event.SL.library_SY,
-         cens.trunc=cens.trunc, 
-         cens.pred.0 = cens.pred.0, 
-         cens.pred.1 = cens.pred.1,
-         survSL.control = survSL.control,
-         survSL.cvControl = survSL.cvControl,
-         save.nuis.fits = save.nuis.fits,
-         prop.SL.library = prop.SL.library,  prop.trunc=prop.trunc, prop.pred = prop.pred, verbose=verbose)
-  }
+  # time = data$Y;
+  # event = data$DeltaY;
+  # time_N = data$N1;
+  # event_N = data$DeltaN1;
+  # admin_t = round(365*L$admin_date);
+  # treat = data$A;
+  # W = data.frame(X=data$X);
+  # id=1:nrow(data);
+  # fit.times=sort(unique(c(data$Y[data$Y>0])));
+  # fit.treat=c(0,1);
+  # conf.band=FALSE;
+  # conf.level=.95;
+  # contrasts = c("risk.ratio");
+  # verbose=TRUE;
+  # nuisance.options = CFsurvival.nuis.opt(
+  #   cross.fit = TRUE,
+  #   V = 5,
+  #   folds = NULL,
+  #   eval.times = sort(unique(c(data$N1, 730))),
+  #   event.SL.library = c("survSL.coxph", "survSL.km", "survSL.expreg"),
+  #   event.pred.0 = NULL,
+  #   event.pred.1 = NULL,
+  #   cens.SL.library = c("survSL.coxph", "survSL.km", "survSL.expreg"),
+  #   event.SL.library_SY = c("survSL.rfsrc"),
+  #   cens.trunc = 0,
+  #   cens.pred.0 = NULL,
+  #   cens.pred.1 = NULL,
+  #   survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+  #   survSL.cvControl = list(V = 5),
+  #   save.nuis.fits = FALSE,
+  #   prop.SL.library = NULL,
+  #   prop.trunc = 0,
+  #   prop.pred = prop.fit,
+  #   verbose = TRUE
+  # )
+  # single_cens_mechanism = TRUE;
+  # em = TRUE;
+  # logN = FALSE
   
-  time = data$Y;
-  event = data$DeltaY;
-  time_N = data$N1;
-  event_N = data$DeltaN1;
-  admin_t = round(365*L$admin_date);
-  treat = data$A;
-  W = data.frame(X=data$X);
-  id=1:nrow(data);
-  fit.times=sort(unique(c(data$Y[data$Y>0])));
-  fit.treat=c(0,1);
-  conf.band=FALSE;
-  conf.level=.95;
-  contrasts = c("risk.ratio");
-  verbose=TRUE;
-  nuisance.options = CFsurvival.nuis.opt(
-    cross.fit = TRUE,
-    V = 5,
-    folds = NULL,
-    eval.times = sort(unique(c(data$N1, 730))),
-    event.SL.library = c("survSL.coxph", "survSL.km", "survSL.expreg"),
-    event.pred.0 = NULL,
-    event.pred.1 = NULL,
-    cens.SL.library = c("survSL.coxph", "survSL.km", "survSL.expreg"),
-    event.SL.library_SY = c("survSL.rfsrc"),
-    cens.trunc = 0,
-    cens.pred.0 = NULL,
-    cens.pred.1 = NULL,
-    survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
-    survSL.cvControl = list(V = 5),
-    save.nuis.fits = FALSE,
-    prop.SL.library = NULL,
-    prop.trunc = 0,
-    prop.pred = prop.fit,
-    verbose = TRUE
-  )
-  single_cens_mechanism = TRUE;
-  em = TRUE;
-  logN = FALSE
-  
-  # This function only ouputs the *event* probabilities (ignore censoring)
-  pSSL_event_only <- function (object, newdata, new.times, X = NULL, time = NULL, 
-                               event = NULL, onlySL = FALSE, threshold = 1e-04, ...){
-    
-    if (missing(newdata)) {
-      out <- list(survpred = object$survSL.predict, 
-                  survlibrary.predict = object$survlibrary.predict)
-      return(out)
-    }
-    if (!object$control$saveFitLibrary) {
-      stop("This SuperLearner fit was created using control$saveFitLibrary = FALSE, so new predictions cannot be made.")
-    }
-    
-    event.k <- nrow(object$event.libraryNames) # 1
-    event.pred <- array(0, dim = c(nrow(newdata), length(new.times), event.k))
-    dimnames(event.pred)[[3]] <- apply(object$event.libraryNames, 1, paste, collapse = "_")
-    dimnames(event.pred)[[2]] <- new.times
-    
-    if (onlySL) {
-      event.whichLibrary <- which(object$event.coef > threshold)
-      event.coef <- object$event.coef
-      event.coef[-event.whichLibrary] <- 0
-      event.coef <- event.coef/sum(event.coef)
-    } else {
-      event.whichLibrary <- seq(event.k)
-      event.coef <- object$event.coef
-    }
-    for (mm in event.whichLibrary) {
-      newdataMM <- subset(newdata, select = object$event.whichScreen[object$event.SL.library$library[mm, 2], ])
-      XMM <- if (is.null(X)) {
-        NULL
-      }
-      else {
-        subset(X, select = object$event.whichScreen[object$event.SL.library$library[mm, 2], ])
-      }
-      event.pred[, , mm] <- do.call(paste0("predict", ".", class(object$event.fitLibrary[[mm]])),
-                                    list(object = object$event.fitLibrary[[mm]], 
-                                         newX = newdataMM, new.times = new.times, X = XMM, 
-                                         time = time, event = event, ...))
-    }
-    event.SL.predict <- matrix(NA, nrow = nrow(newdata), ncol = length(new.times))
-    if(event.k==1){
-      for (j in seq(length(new.times))) {
-        event.SL.predict[, j] <- event.pred[, j, ] * event.coef
-      }
-    }else{
-      for (j in seq(length(new.times))) {
-        event.SL.predict[, j] <- event.pred[, j, ] %*% event.coef
-      }
-    }
-    
-    out <- list(event.SL.predict = event.SL.predict, event.library.predict = event.pred)
-    return(out)
-  }
-  
-  nuis <- do.call("CFsurvival.nuis.opt", nuisance.options)
+  nuis <- do.call(".CFsurvival.nuis.opt", nuisance.options)
   n    <- length(time)
   W    <- as.data.frame(W)
   
@@ -235,8 +160,6 @@ AIPWCC_newEIF_em <- function(
   
   for (v in seq_len(nuis$V)) {
     
-    v=1
-    
     if (verbose) message(sprintf("  Fold %d / %d", v, nuis$V))
     
     tr_idx <- which(nuis$folds != v)
@@ -301,7 +224,7 @@ AIPWCC_newEIF_em <- function(
       colnames(x) <- colnames(W)
       if (nrow(x) == 1L) { x <- rbind(x, x); drop1 <- TRUE } else drop1 <- FALSE
       newdat <- bind_cols(A = a, x)
-      out <- pSSL_event_only(object = fit, 
+      out <- .pSSL_event_only(object = fit, 
                   newdata = newdat, 
                   new.times = t, 
                   onlySL = TRUE)$event.SL.predict
@@ -357,14 +280,14 @@ AIPWCC_newEIF_em <- function(
         id               = aug_tr$id
       )
       
-      SY0 <- pSSL_event_only(SY_fit, 
+      SY0 <- .pSSL_event_only(SY_fit, 
                              newdata = cbind(A=0L, aug_te[,c("N","DeltaN",W_names),drop=FALSE]), 
                              new.times = fit.times, 
                              onlySL = TRUE)$event.SL.predict %>%  bigmemory::as.big.matrix()
 
       gc()
       
-      SY1 <- pSSL_event_only(SY_fit, 
+      SY1 <- .pSSL_event_only(SY_fit, 
                              newdata = cbind(A=1L, aug_te[,c("N","DeltaN",W_names),drop=FALSE]), 
                              new.times = fit.times, 
                              onlySL = TRUE)$event.SL.predict %>%  bigmemory::as.big.matrix()
@@ -378,7 +301,9 @@ AIPWCC_newEIF_em <- function(
       
       if(verbose) message("        Iterative EM-style updates to S_{0Y}")  
       
-      em_out <- .fit_SY_em(
+      #nuis$event.SL.library_SY<-c("survSL.coxph")
+      
+      em_out <- .fit_SY_em_old(
           aug_tr            = aug_tr,
           aug_te            = aug_te,
           dat_te            = dat_te,
@@ -386,9 +311,10 @@ AIPWCC_newEIF_em <- function(
           W_names           = W_names,
           nuis              = nuis,
           max_iter          = 5,             # 1 disables EM; 2 = one update
-          tol               = 1E-4,
-          fast_iter_library = "survSL.coxph",           # e.g. c("survSL.coxph") for speed
-          verbose           = verbose)
+          tol               = 1/length(fit.times),
+          fast_iter_library = 'survSL.coxph',           # e.g. c("survSL.coxph") for speed
+          verbose           = verbose, 
+          weight_norm = "L2")
       
       SY0    <- bigmemory::as.big.matrix(em_out$SY0)
       SY1    <- bigmemory::as.big.matrix(em_out$SY1)
@@ -433,8 +359,6 @@ AIPWCC_newEIF_em <- function(
       GC0[GC0 == 0] <- min(GC0[GC0 > 0])
       GC1[GC1 == 0] <- min(GC1[GC1 > 0])
       
-      
-      
     }else{
       
       ### TO FILL OUT LATER
@@ -462,61 +386,80 @@ AIPWCC_newEIF_em <- function(
     # Accumulate (fold order)
     # ----------------------------------------------------------------
     if (0L %in% fit.treat) {
-      eif0_fold <- .get.survival.AIPWCC(
-        Y       = dat_te$Y,
-        DeltaY  = dat_te$DeltaY,
-        N       = dat_te$N,
-        DeltaN  = dat_te$DeltaN,
-        A       = 1L - dat_te$A,
-        admin_t = dat_te$admin_t,
-        fit.times  = fit.times,
-        eval.times = eval.times,
-        ids        = aug_te$id,
-        S.hats     = SY0,                    # (n_aug_te x K) — fold-local only
-        GY.hats_a0  = GC0,
-        GY.hats_alt = GC1,
-        GN.hats_a0  = GC0,
-        GN.hats_alt = GC1,
-        g.hats  = 1 - nuis$prop.pred[te_idx],
-        fN_a0   = post$fN0,
-        fN_alt  = post$fN1,
-        isotonize = FALSE,
-        verbose   = TRUE,
-        single_cens_mechanism = TRUE
+      # eif0_fold <- .get.survival.AIPWCC(
+      #   Y       = dat_te$Y,
+      #   DeltaY  = dat_te$DeltaY,
+      #   N       = dat_te$N,
+      #   DeltaN  = dat_te$DeltaN,
+      #   A       = 1L - dat_te$A,
+      #   admin_t = dat_te$admin_t,
+      #   fit.times  = fit.times,
+      #   eval.times = eval.times,
+      #   ids        = aug_te$id,
+      #   S.hats     = SY0,                    # (n_aug_te x K) — fold-local only
+      #   GY.hats_a0  = GC0,
+      #   GY.hats_alt = GC1,
+      #   GN.hats_a0  = GC0,
+      #   GN.hats_alt = GC1,
+      #   g.hats  = 1 - nuis$prop.pred[te_idx],
+      #   fN_a0   = post$fN0,
+      #   fN_alt  = post$fN1,
+      #   isotonize = FALSE,
+      #   verbose   = TRUE,
+      #   single_cens_mechanism = TRUE
+      # )
+
+      eif0_fold<-.get.survival.AIPWCC.2(
+          Y       = dat_te$Y,
+          DeltaY  = dat_te$DeltaY,
+          N       = dat_te$N,
+          DeltaN  = dat_te$DeltaN,
+          A       = 1L - dat_te$A,
+          admin_t = dat_te$admin_t,
+          fit.times  = fit.times,
+          eval.times = eval.times,
+          ids        = aug_te$id,
+          S.hats     = SY0,                    # (n_aug_te x K) — fold-local only
+          G.hats  = GC0,
+          g.hats  = 1 - nuis$prop.pred[te_idx],
+          fN_a0   = post$fN0,
+          fN_alt  = post$fN1,
+          isotonize = TRUE,
+          verbose   = TRUE,
+          single_cens_mechanism = TRUE
       )
+      
       acc$IF0 <- rbind(acc$IF0, eif0_fold$IF.vals)
     }
     
     if (1L %in% fit.treat) {
-      eif1_fold <- .get.survival.AIPWCC(
+      eif1_fold <- .get.survival.AIPWCC.2(
         Y       = dat_te$Y,
         DeltaY  = dat_te$DeltaY,
         N       = dat_te$N,
-        DeltaN  = dat_te$DeltaN_eff,
+        DeltaN  = dat_te$DeltaN,
         A       = dat_te$A,
         admin_t = dat_te$admin_t,
         fit.times  = fit.times,
         eval.times = eval.times,
         ids        = aug_te$id,
-        S.hats     = SY1,
-        GY.hats_a0  = GC1,
-        GY.hats_alt = GC0,
-        GN.hats_a0  = GC1,
-        GN.hats_alt = GC0,
+        S.hats     = SY1,                    # (n_aug_te x K) — fold-local only
+        G.hats  = GC1,
         g.hats  = nuis$prop.pred[te_idx],
         fN_a0   = post$fN1,
         fN_alt  = post$fN0,
-        isotonize = FALSE,
-        verbose   = TRUE, 
+        isotonize = TRUE,
+        verbose   = TRUE,
         single_cens_mechanism = TRUE
       )
+      
       acc$IF1 <- rbind(acc$IF1, eif1_fold$IF.vals)
     }
     
     acc$test_ids <- c(acc$test_ids,     dat_te$id)
     
-    rm(SY0, SY1, aug_tr, aug_te, post,
-       eif0_fold, eif1_fold, GC_fit, GC0, GC1)
+    rm(SY0, SY1, aug_tr, aug_te, post, SN_pred,
+       eif0_fold, eif1_fold, GC_fit, GC0, GC1, SN_fit, SN0, SN1, em_out)
     gc()
     if (verbose) message(sprintf("  Fold %d complete", v))
   }
@@ -612,6 +555,99 @@ AIPWCC_newEIF_em <- function(
   result
 }
 
+survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, ...)
+{
+  data <- data.frame(time, event)
+  data <- cbind(data, X)
+  fit.rfsrc <- randomForestSRC::rfsrc.fast(Surv(time, event) ~ .,
+                                      data = data, importance = FALSE, case.wt = obsWeights, forest=TRUE, save.memory = TRUE,
+                                      ...)
+  survs <- predict(fit.rfsrc, newdata = newX, importance = "none")$survival
+  pred <- t(sapply(1:nrow(survs), function(i) {
+    stats::approx(c(0, fit.rfsrc$time.interest), c(1, survs[i,
+    ]), method = "constant", xout = new.times, rule = 2)$y
+  }))
+  fit <- list(object = fit.rfsrc)
+  class(fit) <- c("survSL.rfsrc")
+  out <- list(pred = pred, fit = fit)
+  return(out)
+}
+
+
+.CFsurvival.nuis.opt <- function(cross.fit = TRUE, V = ifelse(cross.fit, 10, 1), folds = NULL, eval.times = NULL,
+                                event.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg", "survSL.weibreg", "survSL.loglogreg", "survSL.gam", "survSL.rfsrc"), function(alg) c(alg, "survscreen.glmnet", "survscreen.marg", "All") ),  event.pred.0 = NULL, event.pred.1 = NULL,
+                                event.SL.library_SY = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg", "survSL.weibreg", "survSL.loglogreg", "survSL.gam", "survSL.rfsrc"), function(alg) c(alg, "survscreen.glmnet", "survscreen.marg", "All") ),
+                                cens.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg", "survSL.weibreg", "survSL.loglogreg", "survSL.gam", "survSL.rfsrc"), function(alg) c(alg, "survscreen.glmnet", "survscreen.marg", "All") ),  cens.trunc=0, cens.pred.0 = NULL, cens.pred.1 = NULL,
+                                survSL.control = list(initWeightAlg = "survSL.rfsrc", verbose=FALSE), survSL.cvControl = list(V = 10), save.nuis.fits = FALSE,
+                                prop.SL.library = lapply(c("SL.mean", "SL.glm", "SL.gam", "SL.earth", "SL.ranger", "SL.xgboost"), function(alg) c(alg, "screen.glmnet", "screen.corRank", "All") ), prop.trunc=0, prop.pred = NULL,
+                                verbose=FALSE) {
+  list(cross.fit = cross.fit, V = V, folds = folds, eval.times = eval.times,
+       event.SL.library = event.SL.library, event.pred.0 = event.pred.0, event.pred.1 = event.pred.1,
+       cens.SL.library = cens.SL.library, 
+       event.SL.library_SY = event.SL.library_SY,
+       cens.trunc=cens.trunc, 
+       cens.pred.0 = cens.pred.0, 
+       cens.pred.1 = cens.pred.1,
+       survSL.control = survSL.control,
+       survSL.cvControl = survSL.cvControl,
+       save.nuis.fits = save.nuis.fits,
+       prop.SL.library = prop.SL.library,  prop.trunc=prop.trunc, prop.pred = prop.pred, verbose=verbose)
+}
+
+# This function only ouputs the *event* probabilities (ignore censoring)
+.pSSL_event_only <- function (object, newdata, new.times, X = NULL, time = NULL, 
+                             event = NULL, onlySL = FALSE, threshold = 1e-04, ...){
+  
+  if (missing(newdata)) {
+    out <- list(survpred = object$survSL.predict, 
+                survlibrary.predict = object$survlibrary.predict)
+    return(out)
+  }
+  if (!object$control$saveFitLibrary) {
+    stop("This SuperLearner fit was created using control$saveFitLibrary = FALSE, so new predictions cannot be made.")
+  }
+  
+  event.k <- nrow(object$event.libraryNames) # 1
+  event.pred <- array(0, dim = c(nrow(newdata), length(new.times), event.k))
+  dimnames(event.pred)[[3]] <- apply(object$event.libraryNames, 1, paste, collapse = "_")
+  dimnames(event.pred)[[2]] <- new.times
+  
+  if (onlySL) {
+    event.whichLibrary <- which(object$event.coef > threshold)
+    event.coef <- object$event.coef
+    event.coef[-event.whichLibrary] <- 0
+    event.coef <- event.coef/sum(event.coef)
+  } else {
+    event.whichLibrary <- seq(event.k)
+    event.coef <- object$event.coef
+  }
+  for (mm in event.whichLibrary) {
+    newdataMM <- subset(newdata, select = object$event.whichScreen[object$event.SL.library$library[mm, 2], ])
+    XMM <- if (is.null(X)) {
+      NULL
+    }
+    else {
+      subset(X, select = object$event.whichScreen[object$event.SL.library$library[mm, 2], ])
+    }
+    event.pred[, , mm] <- do.call(paste0("predict", ".", class(object$event.fitLibrary[[mm]])),
+                                  list(object = object$event.fitLibrary[[mm]], 
+                                       newX = newdataMM, new.times = new.times, X = XMM, 
+                                       time = time, event = event, ...))
+  }
+  event.SL.predict <- matrix(NA, nrow = nrow(newdata), ncol = length(new.times))
+  if(event.k==1){
+    for (j in seq(length(new.times))) {
+      event.SL.predict[, j] <- event.pred[, j, ] * event.coef
+    }
+  }else{
+    for (j in seq(length(new.times))) {
+      event.SL.predict[, j] <- event.pred[, j, ] %*% event.coef
+    }
+  }
+  
+  out <- list(event.SL.predict = event.SL.predict, event.library.predict = event.pred)
+  return(out)
+}
 
 # ------------------------------------------------------------------
 # .compute_aug_likelihood
@@ -628,7 +664,7 @@ AIPWCC_newEIF_em <- function(
   newdat <- cbind(A = aug_tr$A,
                   aug_tr[, c("N", "DeltaN", W_names), drop = FALSE])
   
-  SY_pred <- pSSL_event_only(
+  SY_pred <- .pSSL_event_only(
     object    = SY_fit,
     newdata   = newdat,
     new.times = fit.times,
@@ -761,7 +797,7 @@ AIPWCC_newEIF_em <- function(
   
   stopifnot(max_iter >= 1L)
   
-  AW_ev_tr <- cbind(A = aug_tr$A, aug_tr[, c("N", "DeltaN", W_names), drop = FALSE])
+  AW_ev_tr <- cbind(A = aug_tr$A, aug_tr[, c("N",  W_names), drop = FALSE])
   if(logN==TRUE){
     AW_ev_tr$N <- log(AW_ev_tr$N)
   }
@@ -783,7 +819,7 @@ AIPWCC_newEIF_em <- function(
       X_event          = AW_ev_tr,
       X_cens           = AW_ce_tr,
       newX_event       = cbind(A = 0L,
-                               aug_te[, c("N","DeltaN",W_names), drop = FALSE] %>%
+                               aug_te[, c("N",W_names), drop = FALSE] %>%
                                  dplyr::slice(1:2)),
       newX_cens        = AW_ce_te[1:2, ],
       new.times        = fit.times,
@@ -832,14 +868,14 @@ AIPWCC_newEIF_em <- function(
         drop = FALSE
       ]
       
-      pred0 <- pSSL_event_only(
+      pred0 <- .pSSL_event_only(
         object    = SY_fit,
         newdata   = cbind(A = 0L, X_block),
         new.times = fit.times,
         onlySL    = TRUE
       )$event.SL.predict
       
-      pred1 <- pSSL_event_only(
+      pred1 <- .pSSL_event_only(
         object    = SY_fit,
         newdata   = cbind(A = 1L, X_block),
         new.times = fit.times,
@@ -964,16 +1000,16 @@ AIPWCC_newEIF_em <- function(
   }
   
   # Final predictions on aug_te under both arms
-  SY0 <- pSSL_event_only(
+  SY0 <- .pSSL_event_only(
     object    = SY_fit,
-    newdata   = cbind(A = 0L, aug_te[, c("N","DeltaN",W_names), drop = FALSE]),
+    newdata   = cbind(A = 0L, aug_te[, c("N",W_names), drop = FALSE]),
     new.times = fit.times,
     onlySL    = TRUE
   )$event.SL.predict
   
-  SY1 <- pSSL_event_only(
+  SY1 <- .pSSL_event_only(
     object    = SY_fit,
-    newdata   = cbind(A = 1L, aug_te[, c("N","DeltaN",W_names), drop = FALSE]),
+    newdata   = cbind(A = 1L, aug_te[, c("N",W_names), drop = FALSE]),
     new.times = fit.times,
     onlySL    = TRUE
   )$event.SL.predict
@@ -1006,7 +1042,7 @@ AIPWCC_newEIF_em <- function(
   
   stopifnot(max_iter >= 1L)
   
-  AW_ev_tr <- cbind(A = aug_tr$A, aug_tr[, c("N", "DeltaN", W_names), drop = FALSE])
+  AW_ev_tr <- cbind(A = aug_tr$A, aug_tr[, c("N", W_names), drop = FALSE])
   if(logN==TRUE){
   AW_ev_tr$N <- log(AW_ev_tr$N)
   }
@@ -1028,7 +1064,7 @@ AIPWCC_newEIF_em <- function(
       X_event          = AW_ev_tr,
       X_cens           = AW_ce_tr,
       newX_event       = cbind(A = 0L,
-                               aug_te[, c("N","DeltaN",W_names), drop = FALSE] %>%
+                               aug_te[, c("N",W_names), drop = FALSE] %>%
                                  dplyr::slice(1:2)),
       newX_cens        = AW_ce_te[1:2, ],
       new.times        = fit.times,
@@ -1123,16 +1159,16 @@ AIPWCC_newEIF_em <- function(
   }
   
   # Final predictions on aug_te under both arms
-  SY0 <- pSSL_event_only(
+  SY0 <- .pSSL_event_only(
     object    = SY_fit,
-    newdata   = cbind(A = 0L, aug_te[, c("N","DeltaN",W_names), drop = FALSE]),
+    newdata   = cbind(A = 0L, aug_te[, c("N",W_names), drop = FALSE]),
     new.times = fit.times,
     onlySL    = TRUE
   )$event.SL.predict
   
-  SY1 <- pSSL_event_only(
+  SY1 <- .pSSL_event_only(
     object    = SY_fit,
-    newdata   = cbind(A = 1L, aug_te[, c("N","DeltaN",W_names), drop = FALSE]),
+    newdata   = cbind(A = 1L, aug_te[, c("N",W_names), drop = FALSE]),
     new.times = fit.times,
     onlySL    = TRUE
   )$event.SL.predict
@@ -1159,7 +1195,7 @@ AIPWCC_newEIF_em <- function(
     ri          <- dat[i, ]
     Ai          <- ri$A
     N0          <- ri$N
-    admin_t_i   <- (ri$admin_t + 1)
+    admin_t_i   <- ri$admin_t
     xi          <- ri[, W_names, drop=FALSE]
     
     # Unique event times in same arm + admin_t as support
@@ -1251,12 +1287,10 @@ AIPWCC_newEIF_em <- function(
     aug_idx <- id_to_aug[[as.character(idi)]]
     
     # Prior: discrete PMF of N on eval.times under each arm
-    SN1 <- survest_N(t=eval.times, x=xi, a=1) # l x 1 (eval.times)
-    SN0 <- survest_N(t=eval.times, x=xi, a=0) # l x 1
-    
-    # I need positive mass put on ALL N event times
-    pr1 <- pmax(0, c(1, SN1[-l]) - SN1) #(l) x 1
-    pr0 <- pmax(0, c(1, SN0[-l]) - SN0) #(l) x 1
+    SN1 <- survest_N(t=eval.times, x=xi, a=1)
+    SN0 <- survest_N(t=eval.times, x=xi, a=0)
+    pr1 <- pmax(0, c(1, SN1[-l]) - SN1)
+    pr0 <- pmax(0, c(1, SN0[-l]) - SN0)
     
     # Likelihood: L(Yi, dYi | A=a, X, N=n_j) for each aug_te row (= N grid pt)
     if (dYi == 0L) {
@@ -1295,19 +1329,16 @@ AIPWCC_newEIF_em <- function(
 # ==================================================================
 # MAIN EIF COMPUTATION
 # ==================================================================
-.get.survival.AIPWCC <- function(
-    Y, DeltaY, N, DeltaN,   # DeltaN = DeltaN_eff (admin cens recoded to 1)
-    A,                       # A[i]=1 iff participant in target arm a0
+.get.survival.AIPWCC.2 <- function(
+    Y, DeltaY, N, DeltaN,
+    A,                       # A[i] = 1 iff participant in target arm a0
     admin_t,
-    fit.times, eval.times, ids,
-    S.hats,                  # S_Y(t|a0,X,N): aug-aligned  (n_aug x K)
-    GY.hats_a0,              # G_C^Y(t|a0,X):  per-part    (n x K)
-    GY.hats_alt,             # G_C^Y(t|1-a0,X):per-part    (n x K)
-    GN.hats_a0,              # G_C^N(t|a0,X):  per-part    (n x K)
-    GN.hats_alt,             # G_C^N(t|1-a0,X):per-part    (n x K)
-    g.hats,                  # pi(a0|X)                     (n)
-    fN_a0,                   # posterior P(N|Y,dY,X,A=a0)   (n x l)
-    fN_alt,                  # posterior P(N|Y,dY,X,A=1-a0) (n x l)
+    fit.times, eval.times,
+    ids,
+    S.hats,
+    G.hats,                  # length K -- oracle G_Y(t)
+    g.hats,                  # length n -- pi(a0 | x)
+    fN_a0, fN_alt,           # n x l posterior matrices
     isotonize = TRUE,
     verbose   = TRUE,
     single_cens_mechanism = TRUE
@@ -1316,22 +1347,19 @@ AIPWCC_newEIF_em <- function(
   # Y       = dat_te$Y;
   # DeltaY  = dat_te$DeltaY;
   # N       = dat_te$N;
-  # DeltaN  = dat_te$DeltaN_eff;
-  # A       = dat_te$A;
+  # DeltaN  = dat_te$DeltaN;
+  # A       = 1L - dat_te$A;
   # admin_t = dat_te$admin_t;
   # fit.times  = fit.times;
   # eval.times = eval.times;
   # ids        = aug_te$id;
-  # S.hats     = SY1;
-  # GY.hats_a0  = GC1;
-  # GY.hats_alt = GC0;
-  # GN.hats_a0  = GC1;
-  # GN.hats_alt = GC0;
-  # g.hats  = nuis$prop.pred[te_idx];
-  # fN_a0   = post$fN1;
-  # fN_alt  = post$fN0;
-  # isotonize = FALSE;
-  # verbose   =TRUE;
+  # S.hats     = SY0;                    # (n_aug_te x K) — fold-local only
+  # G.hats  = GC0;
+  # g.hats  = 1 - nuis$prop.pred[te_idx];
+  # fN_a0   = post$fN0;
+  # fN_alt  = post$fN1;
+  # isotonize = TRUE;
+  # verbose   = TRUE;
   # single_cens_mechanism = TRUE
   
   fit.times <- sort(fit.times[fit.times > 0])
@@ -1339,20 +1367,10 @@ AIPWCC_newEIF_em <- function(
   K  <- length(fit.times)
   l  <- length(eval.times)
   
-  # Sort K-column matrices
-  ord        <- order(fit.times)
-  fit.times  <- fit.times[ord]
-  S.hats     <- S.hats[,       ord, drop=FALSE]
-  # GY.hats_a0 <- GY.hats_a0[,  ord, drop=FALSE]
-  # GY.hats_alt<- GY.hats_alt[, ord, drop=FALSE]
-  # GN.hats_a0 <- GN.hats_a0[,  ord, drop=FALSE]
-  # GN.hats_alt<- GN.hats_alt[, ord, drop=FALSE]
+  Y_ind <- pmax(1L, pmin(findInterval(Y, fit.times), K))
+  N_ind <- pmax(1L, pmin(findInterval(N, eval.times), l))
   
-  # Grid index lookups (pre-computed, avoid repeated which() inside loop)
-  Y_ind <- findInterval(Y, fit.times, rightmost.closed=FALSE) # FIXED
-  Y_ind <- pmax(1L, pmin(Y_ind, K))
-  N_ind <- findInterval(N, eval.times, rightmost.closed=FALSE) # FIXED
-  N_ind <- pmax(1L, pmin(N_ind, l))
+  IF.vals <- matrix(NA_real_, n, K)
   
   # Fast aug-row lookup
   id_to_rows <- split(seq_along(ids), ids)
@@ -1373,75 +1391,68 @@ AIPWCC_newEIF_em <- function(
     Shi      <- S.hats[rows_i,, drop=FALSE]   # (l x K)
     
     # G_C^Y step function (for phi^F: vals.i and G_y)
-    GYi_vec  <- GY.hats_a0[i,]
+    GYi_vec  <- G.hats[i,]
     if(single_cens_mechanism==TRUE){
       GYi_fun  <- stepfun(sort(unique(c(eval.times, fit.times))), c(1, GYi_vec), right=TRUE)
     }
+    G_left  <- GYi_fun(fit.times[-K])
     
-    # ---- phi^F compensator (Ted's pattern, adapted for (l x K) Shi) ----
-    S_inv  <- 1 / Shi # (l x K)
-    dS_inv <- S_inv[,-1,drop=FALSE] - S_inv[,-K,drop=FALSE]   # (l x K-1)
-    # Divisor: G_Y at left limit of each interval (t_{m-1}, t_m]
-    G_left = GYi_fun(fit.times[-K]) #length (K-1)
-    vals_inner   <- sweep(dS_inv, 2, 1/G_left, FUN="*") # (l x (K-1))
-    # Zero out increments at event times t_m > Y_i
-    vals_inner[, fit.times[-1] > Y[i]] <- 0 # length K-1 mask, matches columns
-    # Prepend 0 and take cumsum to get length-K cumulative compensator
-    vals <- cbind(0, t(apply(vals_inner, 1, cumsum)))              # (l x K)
+    # phi^F compensator
+    S_inv  <- 1 / Shi
+    S_inv[is.infinite(S_inv)]<-0
+    dS_inv <- S_inv[, -1, drop = FALSE] - S_inv[, -K, drop = FALSE]   # l x (K-1)
+    vals_inner <- sweep(dS_inv, 2, 1 / G_left, FUN = "*")             # l x (K-1)
+    vals_inner[, fit.times[-1] > Y[i]] <- 0
+    vals <- cbind(0, t(apply(vals_inner, 1, cumsum)))                 # l x K
     
-    S_y  <- Shi[, Y_ind[i]]       # S_Y(Y_i | a0, X, N_j) for each j
-    G_y  <- GYi_fun(Y[i])         # G_C^Y(Y_i | a0, X)
+    S_y <- Shi[, Y_ind[i]]
+    G_y <- GYi_fun(Y[i])
     
-    # ---- K_N on eval.times grid (no 0 prepended) ---
+    # K_N on eval.times grid
     if (single_cens_mechanism) {
       K_N <- sapply(eval.times,
                     FUN = function(t) {
                       DeltaY[i] * GYi_fun(pmax(t, Y[i])) / GYi_fun(Y[i]) +
-                        (1 - DeltaY[i]) * as.numeric(t <= Y[i])              # CHANGED to <=
+                        (1 - DeltaY[i]) * as.numeric(t <= Y[i])
                     })
     }
     
-    KN_fun <- stepfun(eval.times, c(1, K_N), right=TRUE)
+    KN_fun       <- stepfun(eval.times, c(1, K_N), right = TRUE)
+    KN_inv_left  <- 1 / KN_fun(eval.times[-l])
+    KN_inv_left  <- ifelse(is.infinite(KN_inv_left), 0, KN_inv_left)
+    dLambdaN     <- 1 - KN_fun(eval.times[-1]) / KN_fun(eval.times[-l])
+    dLambdaN     <- ifelse(is.nan(dLambdaN), 0, dLambdaN)
     
-    # ---- Hazard increments and at-risk weights ----
-    KN_inv_left   <- 1 / KN_fun(eval.times[-l])                               # length (l-1)
-    KN_inv_left = ifelse(is.infinite(KN_inv_left), 0, KN_inv_left)
-    dLambdaN <- 1 - KN_fun(eval.times[-1]) / KN_fun(eval.times[-l])           # length (l-1)
-    dLambdaN <- ifelse(is.nan(dLambdaN), 0, dLambdaN)
-    
-
-    # fN tail-sum denominator (k-independent, hoist outside k loop)
-    denom_cs <- rev(cumsum(rev(fN.i)))   # P(N >= eval.times[j] | ...)
-    
+    denom_cs   <- rev(cumsum(rev(fN.i)))
     IPW_factor <- as.numeric(A[i] == 1L) / g.hats[i]
     
     for (k in seq_len(K)) {
       
-      S_t0 <- Shi[, k]   # S_Y(t0 | a0, X, N_j), j=1..l
+      S_t0 <- Shi[, k] # l x 1
       
-      inner1 <- if (Y[i] <= fit.times[k] && DeltaY[i] == 1L){
-        1 / (S_y * G_y) 
-      }else{ 
+      inner1 <- if (Y[i] <= fit.times[k] && DeltaY[i] == 1L) {
+        1 / (S_y * G_y)
+      } else {
         rep(0, l)
       }
       
-      # phi^F as a function of N grid point j
-      IF_k <- S_t0 - IPW_factor * S_t0 * (inner1 - vals[, k])
+      IF_k <- S_t0 - IPW_factor * S_t0 * (inner1 - vals[, k]) # l x 1
+      #IF_k <- ifelse(is.na(IF_k, na.rm = TRUE), na.rm=TRUE)
       
-      # Q_seq[j] = E[phi^F(N) | N >= eval.times[j], obs, A=A_i]
-      num_cs <- rev(cumsum(rev(IF_k * fN.i)))
-      Q_seq  <- num_cs / pmax(denom_cs, 1e-12) #length l
+      num_cs <- rev(cumsum(rev(IF_k * fN.i))) # l x 1
+      Q_seq  <- num_cs / pmax(denom_cs, 1e-12)
       
-      # AIPWCC terms
-      # DeltaN[i] = DeltaN_eff: admin-censored N has DeltaN_eff=1 → term1
-      # randomly censored N has DeltaN_eff=0 → term2
-      term1 <- (     DeltaN[i]  / K_N[N_indx]) * IF_k[N_indx]
-      term2 <- ((1 - DeltaN[i]) / K_N[N_indx]) * Q_seq[N_indx]
+      if(K_N[(N_indx)]==0){
+        KNi <- K_N[(N_indx-1)]
+      }else{
+        KNi <- K_N[N_indx]
+      }
       
-      # Term 3: martingale convention, integrate over intervals 1..N_indx-1
-      # (the jump at tilde_N_i is captured by Term 2, not Term 3)
+      term1 <- (    DeltaN[i]  / KNi) * IF_k[N_indx]
+      term2 <- ((1 - DeltaN[i]) /KNi) * Q_seq[N_indx]
+      
       if (N_indx >= 2L) {
-        idx3  <- seq_len(N_indx - 1L)
+        idx3  <- seq_len(N_indx-1)
         term3 <- sum(Q_seq[idx3] * KN_inv_left[idx3] * dLambdaN[idx3])
       } else {
         term3 <- 0
@@ -1453,21 +1464,19 @@ AIPWCC_newEIF_em <- function(
     if (verbose) pb$tick()
   }
   
-  surv           <- colMeans(IF.vals, na.rm=TRUE)
+  surv <- colMeans(IF.vals, na.rm = TRUE)
   IF.vals.center <- sweep(IF.vals, 2, surv, "-")
   
   res <- list(
-    times          = fit.times,
-    surv           = pmin(1, pmax(0, surv)),
-    IF.vals        = IF.vals,
+    times = fit.times,
+    surv = pmin(1, pmax(0, surv)),
+    IF.vals = IF.vals,
     IF.vals.center = IF.vals.center
   )
-  
   if (isotonize) {
-    idx              <- !is.na(surv)
-    res$surv.iso     <- surv
+    idx <- !is.na(surv)
+    res$surv.iso <- surv
     res$surv.iso[idx] <- 1 - isoreg(fit.times[idx], 1 - surv[idx])$yf
   }
-  
   res
 }

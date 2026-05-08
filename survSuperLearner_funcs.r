@@ -826,7 +826,7 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
   cens.cvRisks <- numeric(cens.k)
   for (j in seq_len(cens.k)) {
     risk <- 0
-    for (tt in seq_along(control$event.t.grid)) {
+    for (tt in seq_along(control$cens.t.grid)) {
       y <- 1 - as.numeric(time <= control$cens.t.grid[tt]) *
         event / obs.cens.vals
       res <- y - cens.Z[, tt, j]

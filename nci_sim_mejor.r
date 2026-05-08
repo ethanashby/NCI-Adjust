@@ -41,7 +41,7 @@ run_on_cluster(
     
     sim %<>% set_levels(
       #n=c(1200, 2400, 4800),
-      n=c(2000),
+      n=c(1200),
       trt_prob=0.5,
       RR = c(0.75), #25% efficacy
       RR_C = c(1),
@@ -50,7 +50,7 @@ run_on_cluster(
       #per_year_incidence_C = c(0.05, 0.10, 0.20, 0.30),
       per_year_incidence_C = c(0.10),
       J=1,
-      rho=c(0, 0.5, 0.8),
+      rho=c(0.8),
       X = TRUE,
       #rho_X = c(0.1, 0.5),
       rho_X = c(0),
@@ -73,7 +73,7 @@ run_on_cluster(
       
       message("[1] Generating survival data")
       
-      L<-sim$levels_grid[3,]
+      #L<-sim$levels_grid[1,]
       
       data <- create_multivar_survival(n=L$n, 
                                        trt_prob=L$trt_prob, 
@@ -222,13 +222,13 @@ run_on_cluster(
         conf.level=.95,
         contrasts = c("risk.ratio"),
         verbose=TRUE,
-        nuisance.options = CFsurvival.nuisance.options(
+        nuisance.options = .CFsurvival.nuis.opt(
           cross.fit = TRUE,
           V = 5,
           folds = NULL,
           eval.times = sort(unique(c(data$N1, L$admin_date*365))),
-          event.SL.library = c("survSL.rfsrc"),
-          #"survSL.rfsrc"),
+          event.SL.library = c("survSL.coxph", "survSL.expreg", "survSL.km"),
+          event.SL.library_SY = c("survSL.rfsrc"),
           event.pred.0 = NULL,
           event.pred.1 = NULL,
           cens.SL.library = c("survSL.coxph", "survSL.expreg", "survSL.km"),
@@ -256,7 +256,7 @@ run_on_cluster(
                              "logRR_lci" = tmp$log.risk.ratio - qt(1-(1-0.95)/2, L$n) * tmp$se.log.ratio,
                              "logRR_uci" = tmp$log.risk.ratio + qt(1-(1-0.95)/2, L$n) * tmp$se.log.ratio,
                              "logRR_var" = (tmp$se.log.ratio)^2,
-                             "type" = "NCI-adj (IF + EM + logN)"
+                             "type" = "NCI-adj (IF + EM + N)"
                            )
       ) 
       
@@ -282,7 +282,7 @@ run_on_cluster(
     })
     
     
-    sim %<>% set_config(num_sim=1000, 
+    sim %<>% set_config(num_sim=1200, 
                         seed=474,
                         stop_at_error=TRUE,
                         n_cores = n_cores)

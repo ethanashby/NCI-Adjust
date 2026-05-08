@@ -465,14 +465,14 @@ AIPWCC_newEIF_oracle <- function(
     # Posterior ∝ likelihood × prior
     
     #ENFORCE 0/0 = 1 and add 1E-12 to any zero denominator
-    '|' <- function(a,b) ifelse(a==0 & b==0, 1, ifelse(a!=0 & b==0, a/(b+1e-12), a/b))
+    '||' <- function(a,b) ifelse(a==0 & b==0, 1, ifelse(a!=0 & b==0, a/(b+1e-12), a/b))
     
     u1 <- lk1 * pr1;  
     d1 <- sum(u1) 
-    fN1[i,] <- u1 | d1
+    fN1[i,] <- u1 || d1
     u0 <- lk0 * pr0;  
     d0 <- sum(u0);  
-    fN0[i,] <- u0 | d0
+    fN0[i,] <- u0 || d0
   }
   
   list(fN0=fN0, fN1=fN1)
