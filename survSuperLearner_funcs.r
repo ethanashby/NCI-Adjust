@@ -687,7 +687,7 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
   
   epsilon <- max(min(diff(sort(unique(time)))), 1e-5)
   
-  event.idx <- findInterval(time, control$event.t.grid, rightmost.closed = TRUE)
+  event.idx <- findInterval(time, control$event.t.grid, rightmost.closed = FALSE)
   event.idx[event.idx == 0] <- 1
   
   event.Z.obs <- matrix(NA_real_, N, event.k)
