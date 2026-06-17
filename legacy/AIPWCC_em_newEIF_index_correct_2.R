@@ -27,7 +27,7 @@ AIPWCC_newEIF_em <- function(
     verbose          = TRUE,
     single_cens_mechanism = TRUE,
     em               = TRUE,
-    logN             = TRUE
+    em_fast              = TRUE
 ) {
   
   # time = data$Y;
@@ -38,36 +38,36 @@ AIPWCC_newEIF_em <- function(
   # treat = data$A;
   # W = data.frame(X=data$X);
   # id=1:nrow(data);
-  # fit.times=sort(unique(c(data$Y[data$Y>0])));
+  # fit.times=sort(unique(c(data$Y, (L$admin_date*365))));
   # fit.treat=c(0,1);
   # conf.band=FALSE;
   # conf.level=.95;
   # contrasts = c("risk.ratio");
   # verbose=TRUE;
-  # nuisance.options = CFsurvival.nuis.opt(
+  # nuisance.options = .CFsurvival.nuis.opt(
   #   cross.fit = TRUE,
-  #   V = 5,
+  #   V = 10,
   #   folds = NULL,
-  #   eval.times = sort(unique(c(data$N1, 730))),
-  #   event.SL.library = c("survSL.coxph", "survSL.km", "survSL.expreg"),
+  #   eval.times = sort(unique(c(quantile(data$N1[data$DeltaN1==1], probs = seq(0, 1, by=0.01)), L$admin_date*365))), #sort(unique(c(data$N1, L$admin_date*365))),
+  #   event.SL.library = c("survSL.coxph", "survSL.expreg", "survSL.km", "survSL.gam"),
+  #   event.SL.library_SY = c("survSL.coxph", "survSL.gam.w", "survSL.rfsrc.smooth"),
   #   event.pred.0 = NULL,
   #   event.pred.1 = NULL,
-  #   cens.SL.library = c("survSL.coxph", "survSL.km", "survSL.expreg"),
-  #   event.SL.library_SY = c("survSL.rfsrc"),
+  #   cens.SL.library = c("survSL.coxph", "survSL.expreg", "survSL.km", "survSL.gam.w"),
   #   cens.trunc = 0,
   #   cens.pred.0 = NULL,
   #   cens.pred.1 = NULL,
-  #   survSL.control = list(initWeightAlg = "survSL.km", verbose = FALSE),
+  #   survSL.control = list(initWeightAlg = "survSL.coxph", verbose = FALSE),
   #   survSL.cvControl = list(V = 5),
   #   save.nuis.fits = FALSE,
   #   prop.SL.library = NULL,
   #   prop.trunc = 0,
   #   prop.pred = prop.fit,
   #   verbose = TRUE
-  # )
+  # );
   # single_cens_mechanism = TRUE;
   # em = TRUE;
-  # logN = FALSE
+  # em_fast = TRUE
   
   nuis <- do.call(".CFsurvival.nuis.opt", nuisance.options)
   n    <- length(time)
@@ -97,14 +97,17 @@ AIPWCC_newEIF_em <- function(
   
   fit.times   <- sort(fit.times[fit.times > 0])
   k           <- length(fit.times)
-  if (is.null(nuis$eval.times)){
-    nuis$eval.times <- c(fit.times, max(fit.times) + 1L)
+  if(is.null(nuis$eval.times)){
+    nuis$eval.times <- fit.times
   }
-  for(i in unique(admin_t)){
-  if(!(c(i+1) %in% nuis$eval.times)){
-    nuis$eval.times <- c(nuis$eval.times, i+1)
-  }
-  } # FLAG FIX HERE for updating eval.times
+  # if (is.null(nuis$eval.times)){
+  #   nuis$eval.times <- c(fit.times, max(fit.times) + 1L)
+  # }
+  # for(i in unique(admin_t)){
+  # if(!(c(i+1) %in% nuis$eval.times)){
+  #   nuis$eval.times <- c(nuis$eval.times, i+1)
+  # }
+  # } # FLAG FIX HERE for updating eval.times
   eval.times  <- sort(unique(nuis$eval.times))
   l           <- length(eval.times)
   W_names     <- colnames(W)
@@ -126,8 +129,9 @@ AIPWCC_newEIF_em <- function(
   # ADD 1 to admin_t
   # ------------------------------------------------------------------
   DeltaN_eff <- as.integer( (event_N == 1) | (time_N == admin_t))
-  N_for_lookup <- ifelse(event_N == 0L & time_N == admin_t, admin_t + 1L, time_N)
-  admin_t <- admin_t + 1
+  N_for_lookup <- ifelse(event_N == 0L & time_N == admin_t, admin_t, time_N)
+  #N_for_lookup <- ifelse(event_N == 0L & time_N == admin_t, admin_t + 1L, time_N)
+  #admin_t <- admin_t + 1
   
   # ==================================================================
   # PROPENSITY SCORE
@@ -200,30 +204,30 @@ AIPWCC_newEIF_em <- function(
     SN_fit <- survSuperLearner::survSuperLearner(
       time             = dat_tr$N,
       event            = dat_tr$DeltaN_eff,
-      X                = cbind(A = dat_tr$A, W_tr),
-      newX             = as.data.frame(newAW_te),
+      X                = W_tr,
+      newX             = as.data.frame(W_te),
       new.times        = eval.times,
       event.SL.library = nuis$event.SL.library[nuis$event.SL.library!="survSL.km"], #ENFORCING SMOOTHNESSS
-      cens.SL.library  = c("survSL.km"), #No interest in censoring, keep simple
+      cens.SL.library  = nuis$event.SL.library, #[nuis$event.SL.library!="survSL.km"], #No interest in censoring, keep simple
       verbose          = FALSE,
       control          = nuis$survSL.control,
       cvControl        = nuis$survSL.cvControl
     )
-    SN_pred <- SN_fit$event.SL.predict          # (2*n_te x k) where k is fit.times
-    SN0 <- SN_pred[seq_len(n_te),         , drop=FALSE] # (n_te x k) where k is fit.times
-    SN1 <- SN_pred[seq_len(n_te) + n_te,  , drop=FALSE] # (n_te x k) where k is fit.times
-    SN0[SN0 == 0] <- min(SN0[SN0 > 0])
-    SN1[SN1 == 0] <- min(SN1[SN1 > 0])
+    #SN_pred <- SN_fit$event.SL.predict          # (2*n_te x k) where k is fit.times
+    #SN0 <- SN_pred #SN_pred[seq_len(n_te),         , drop=FALSE] # (n_te x k) where k is fit.times
+    #SN1 <- SN_pred #SN_pred[seq_len(n_te) + n_te,  , drop=FALSE] # (n_te x k) where k is fit.times
+    #SN0[SN0 == 0] <- min(SN0[SN0 > 0])
+    #SN1[SN1 == 0] <- min(SN1[SN1 > 0])
     
     #survest function
-    survest_N <- function(fit=SN_fit, t, x, a) {
+    survest_N <- function(fit=SN_fit, t, x) {
       # x <- newAW_te[1,2]
       # t=c(100, 200)
       # a=1
       x <- as.data.frame(x)
       colnames(x) <- colnames(W)
       if (nrow(x) == 1L) { x <- rbind(x, x); drop1 <- TRUE } else drop1 <- FALSE
-      newdat <- bind_cols(A = a, x)
+      newdat <- bind_cols(x)
       out <- .pSSL_event_only(object = fit, 
                   newdata = newdat, 
                   new.times = t, 
@@ -231,7 +235,8 @@ AIPWCC_newEIF_em <- function(
       if (drop1) out <- out[1,, drop=FALSE]
       as.vector(out)
     }
-    
+    # test out: survest_N(t=eval.times, x=0)
+    # test out: survest_N(t=eval.times, x=2)
     # ----------------------------------------------------------------
     # Step 4: Augment training fold (redistribute-to-right weights)
     # For each participant, expand censored N obs into pseudo-rows
@@ -249,7 +254,27 @@ AIPWCC_newEIF_em <- function(
     # ----------------------------------------------------------------
     # Step 6: S_Y | A, X, N on augmented training data
     # ----------------------------------------------------------------
+    # TRIED: `stackG` in `survML` but just takes FAR too long computationally
     if (verbose) message("    [3] S_Y | A, X, N")
+    
+    #Test out base learners
+    # tictoc::tic()
+    # fit<-survSL.gam.w(time=aug_tr$Y, 
+    #                   event=aug_tr$DeltaY, 
+    #                   X = aug_tr %>% dplyr::select(X, N, DeltaN), 
+    #                   newX = aug_te, 
+    #                   new.times=fit.times, 
+    #                   obsWeights = aug_tr$w)
+    # tictoc::toc()
+    # 
+    # tictoc::tic()
+    # fit<-survSL.rfsrc.smooth(time=aug_tr$Y,
+    #                   event=aug_tr$DeltaY,
+    #                   X = aug_tr %>% dplyr::select(X, N, DeltaN),
+    #                   newX = aug_te %>% filter(id==4),
+    #                   new.times=fit.times,
+    #                   obsWeights = aug_tr$w)
+    # tictoc::toc()
     
     if(em==FALSE){
       
@@ -301,8 +326,10 @@ AIPWCC_newEIF_em <- function(
       
       if(verbose) message("        Iterative EM-style updates to S_{0Y}")  
       
-      #nuis$event.SL.library_SY<-c("survSL.coxph")
+      #nuis$event.SL.library_SY<-c("survSL.gam.w")
+      #nuis$weights <- aug_tr$w
       
+      # This code throws an error: `Error in eval(extras, data, env) : argument "weights" is missing, with no default`
       em_out <- .fit_SY_em_old(
           aug_tr            = aug_tr,
           aug_te            = aug_te,
@@ -311,8 +338,8 @@ AIPWCC_newEIF_em <- function(
           W_names           = W_names,
           nuis              = nuis,
           max_iter          = 5,             # 1 disables EM; 2 = one update
-          tol               = 1/length(fit.times),
-          fast_iter_library = 'survSL.coxph',           # e.g. c("survSL.coxph") for speed
+          tol               = 1E-4,
+          fast_iter_library = ifelse(em_fast==TRUE, "survSL.coxph", NULL),           # e.g. c("survSL.coxph") for speed
           verbose           = verbose, 
           weight_norm = "L2")
       
@@ -361,8 +388,53 @@ AIPWCC_newEIF_em <- function(
       
     }else{
       
-      ### TO FILL OUT LATER
+      if (verbose) message("TWO censoring mechanism specifieds")
+      if (verbose) message("    [4] G_{CY}")
       
+      # Dropout censoring Y
+      rc <- as.integer(dat_tr$DeltaY == 0L & dat_tr$Y < dat_tr$admin_t)
+      
+      C <- dat_tr$Y
+      
+      GC_fit <- survSuperLearner::survSuperLearner(
+        time             = C,
+        event            = rc,
+        X                = cbind(A = dat_tr$A, W_tr),
+        newX             = as.data.frame(newAW_te),
+        new.times        = sort(unique(c(eval.times, fit.times))),
+        event.SL.library = nuis$cens.SL.library,
+        cens.SL.library  = nuis$cens.SL.library,
+        verbose          = FALSE,
+        control          = nuis$survSL.control,
+        cvControl        = nuis$survSL.cvControl
+      )
+      GC_pred <- GC_fit$event.SL.predict          # (2*n_te x k) where k is ALL times
+      GCY0 <- pmax(GC_pred[seq_len(n_te),         , drop=FALSE], nuis$cens.trunc) # (n_te x k) where k is ALL times
+      GCY1 <- pmax(GC_pred[seq_len(n_te) + n_te,  , drop=FALSE], nuis$cens.trunc) # (n_te x k) where k is ALL times
+      GCY0[GCY0 == 0] <- min(GCY0[GCY0 > 0])
+      GCY1[GCY1 == 0] <- min(GCY1[GCY1 > 0])
+      
+      # Dropout censoring N
+      # Direct approach as opposed to data augmentation approach
+      rc <- as.integer(dat_tr$DeltaN == 0L & dat_tr$N < dat_tr$admin_t)
+      C <- dat_tr$N
+      # Prediction grid: both arms × test participants
+      newAW_GN <- as.data.frame(cbind(A = dat_te$A, W_te, Y = dat_te$Y, DeltaY = dat_te$DeltaY))
+      
+      GN_fit <- survSuperLearner::survSuperLearner(
+        time             = C,
+        event            = rc,
+        X                = cbind(A = dat_tr$A, W_tr, Y=dat_tr$Y, DeltaY=dat_tr$DeltaY),
+        newX             = newAW_GN,
+        new.times        = eval.times,
+        event.SL.library = unique(c(nuis$cens.SL.library, "survSL.rfsrc.smooth")),
+        cens.SL.library  = unique(c(nuis$cens.SL.library, "survSL.rfsrc.smooth")),
+        verbose          = FALSE,
+        control          = nuis$survSL.control,
+        cvControl        = nuis$survSL.cvControl
+      )
+      
+      GN_pred <- GN_fit$event.SL.predict          # (2*n_te x length(eval.times))
       
     }
     
@@ -386,34 +458,12 @@ AIPWCC_newEIF_em <- function(
     # Accumulate (fold order)
     # ----------------------------------------------------------------
     if (0L %in% fit.treat) {
-      # eif0_fold <- .get.survival.AIPWCC(
-      #   Y       = dat_te$Y,
-      #   DeltaY  = dat_te$DeltaY,
-      #   N       = dat_te$N,
-      #   DeltaN  = dat_te$DeltaN,
-      #   A       = 1L - dat_te$A,
-      #   admin_t = dat_te$admin_t,
-      #   fit.times  = fit.times,
-      #   eval.times = eval.times,
-      #   ids        = aug_te$id,
-      #   S.hats     = SY0,                    # (n_aug_te x K) — fold-local only
-      #   GY.hats_a0  = GC0,
-      #   GY.hats_alt = GC1,
-      #   GN.hats_a0  = GC0,
-      #   GN.hats_alt = GC1,
-      #   g.hats  = 1 - nuis$prop.pred[te_idx],
-      #   fN_a0   = post$fN0,
-      #   fN_alt  = post$fN1,
-      #   isotonize = FALSE,
-      #   verbose   = TRUE,
-      #   single_cens_mechanism = TRUE
-      # )
-
+      if(single_cens_mechanism){
       eif0_fold<-.get.survival.AIPWCC.2(
           Y       = dat_te$Y,
           DeltaY  = dat_te$DeltaY,
           N       = dat_te$N,
-          DeltaN  = dat_te$DeltaN,
+          DeltaN  = dat_te$DeltaN_eff,
           A       = 1L - dat_te$A,
           admin_t = dat_te$admin_t,
           fit.times  = fit.times,
@@ -421,23 +471,45 @@ AIPWCC_newEIF_em <- function(
           ids        = aug_te$id,
           S.hats     = SY0,                    # (n_aug_te x K) — fold-local only
           G.hats  = GC0,
+          GN.hats = NULL,
           g.hats  = 1 - nuis$prop.pred[te_idx],
           fN_a0   = post$fN0,
           fN_alt  = post$fN1,
           isotonize = TRUE,
           verbose   = TRUE,
-          single_cens_mechanism = TRUE
-      )
+          single_cens_mechanism = TRUE)
+      }else{
+        eif0_fold<-.get.survival.AIPWCC.2(
+          Y       = dat_te$Y,
+          DeltaY  = dat_te$DeltaY,
+          N       = dat_te$N,
+          DeltaN  = dat_te$DeltaN_eff,
+          A       = 1L - dat_te$A,
+          admin_t = dat_te$admin_t,
+          fit.times  = fit.times,
+          eval.times = eval.times,
+          ids        = aug_te$id,
+          S.hats     = SY0,                    # (n_aug_te x K) — fold-local only
+          G.hats  = GC0,
+          GN.hats = GN_pred,
+          g.hats  = 1 - nuis$prop.pred[te_idx],
+          fN_a0   = post$fN0,
+          fN_alt  = post$fN1,
+          isotonize = TRUE,
+          verbose   = TRUE,
+          single_cens_mechanism = FALSE)  
+      }
       
       acc$IF0 <- rbind(acc$IF0, eif0_fold$IF.vals)
     }
     
     if (1L %in% fit.treat) {
+      if(single_cens_mechanism){
       eif1_fold <- .get.survival.AIPWCC.2(
         Y       = dat_te$Y,
         DeltaY  = dat_te$DeltaY,
         N       = dat_te$N,
-        DeltaN  = dat_te$DeltaN,
+        DeltaN  = dat_te$DeltaN_eff,
         A       = dat_te$A,
         admin_t = dat_te$admin_t,
         fit.times  = fit.times,
@@ -451,7 +523,28 @@ AIPWCC_newEIF_em <- function(
         isotonize = TRUE,
         verbose   = TRUE,
         single_cens_mechanism = TRUE
-      )
+      )}else{
+        eif0_fold<-.get.survival.AIPWCC.2(
+          Y       = dat_te$Y,
+          DeltaY  = dat_te$DeltaY,
+          N       = dat_te$N,
+          DeltaN  = dat_te$DeltaN_eff,
+          A       = dat_te$A,
+          admin_t = dat_te$admin_t,
+          fit.times  = fit.times,
+          eval.times = eval.times,
+          ids        = aug_te$id,
+          S.hats     = SY1,                    # (n_aug_te x K) — fold-local only
+          G.hats  = GC1,
+          GN.hats = GN_pred,
+          g.hats  = nuis$prop.pred[te_idx],
+          fN_a0   = post$fN1,
+          fN_alt  = post$fN0,
+          isotonize = TRUE,
+          verbose   = TRUE,
+          single_cens_mechanism = FALSE
+        )  
+      }
       
       acc$IF1 <- rbind(acc$IF1, eif1_fold$IF.vals)
     }
@@ -573,6 +666,248 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
   return(out)
 }
 
+# Idea: use weighted GAM to account for augmentation weights and impose smoothness
+survSL.gam.w <- function(time, event, X, newX, new.times, cts.num = 5,
+                         obsWeights, ...) {
+  
+  # Build formula
+  cts.x <- apply(X, 2, function(x) length(unique(x)) > cts.num)
+  if (sum(cts.x) > 0 && sum(!cts.x) > 0) {
+    gam.model <- as.formula(paste(
+      "time ~",
+      paste(paste0("s(", colnames(X[, cts.x, drop = FALSE]), ")"), collapse = "+"),
+      "+",
+      paste(colnames(X[, !cts.x, drop = FALSE]), collapse = "+")
+    ))
+  } else if (sum(cts.x) > 0) {
+    gam.model <- as.formula(paste(
+      "time ~",
+      paste(paste0("s(", colnames(X[, cts.x, drop = FALSE]), ")"), collapse = "+")
+    ))
+  } else {
+    gam.model <- as.formula(paste("time ~", paste(colnames(X), collapse = "+")))
+  }
+  
+  X_fit       <- as.data.frame(X)
+  X_fit$time  <- time
+  X_fit$event <- event
+  
+  fit.gam <- mgcv::gam(gam.model,
+                       family  = mgcv::cox.ph(),
+                       data    = X_fit,
+                       weights = event * obsWeights)
+  
+  # ----- Build a baseline survival curve via a single reference participant -----
+  # Pick the column-wise mean of training X as the reference. Doesn't matter
+  # which point we pick as long as we record the linear predictor at it.
+  ref_X <- as.data.frame(lapply(X_fit[, setdiff(names(X_fit), c("time", "event")),
+                                      drop = FALSE], function(col) {
+                                        if (is.numeric(col)) mean(col) else as(names(sort(table(col), decreasing = TRUE))[1],
+                                                                               class(col))
+                                      }))
+  
+  # Evaluate baseline survival on new.times for the reference participant
+  ref_grid       <- ref_X[rep(1L, length(new.times)), , drop = FALSE]
+  ref_grid$time  <- new.times
+  S_ref_on_grid  <- as.numeric(predict(fit.gam, newdata = ref_grid, type = "response"))
+  
+  # Compute the eta(x) - eta(ref) shift for each newX row:
+  # Use lpmatrix predictions at any common time (S depends on time only via H0).
+  # Trick: S(t | x) = S_ref(t)^{exp(eta(x) - eta(ref))}.
+  # We need (eta(x) - eta(ref)) for each newX row. Get it via type="link" predictions
+  # at a *single* time point (any time -- the link includes the same eta term).
+  one_t <- new.times[1]
+  newX_fixed_time          <- as.data.frame(newX)
+  newX_fixed_time$time     <- one_t
+  ref_fixed_time           <- ref_X
+  ref_fixed_time$time      <- one_t
+  
+  link_newX <- as.numeric(predict(fit.gam, newdata = newX_fixed_time, type = "link"))
+  link_ref  <- as.numeric(predict(fit.gam, newdata = ref_fixed_time,  type = "link"))
+  
+  eta_shift <- link_newX - link_ref   # length n_newX, the (eta(x) - eta(ref)) per row
+  
+  # Combine: S(t | x) = S_ref(t)^{exp(eta_shift)}.
+  # Avoid 0^anything = 0 issue; clamp S_ref away from {0, 1}.
+  S_ref_safe <- pmax(pmin(S_ref_on_grid, 1 - 1e-12), 1e-12)
+  pred       <- t(outer(log(S_ref_safe), exp(eta_shift), "*"))
+  pred       <- exp(pred)
+  # pred[i, j] = S(new.times[j] | newX[i, ])
+  
+  fit_obj <- list(
+    fit       = fit.gam,
+    ref_X     = ref_X,
+    new.times = new.times
+  )
+  class(fit_obj) <- "survSL.gam.w"
+  
+  list(pred = pred, fit = fit_obj)
+}
+
+predict.survSL.gam.w <- function(object, newX, new.times, ...) {
+  fit.gam <- object$fit
+  ref_X   <- object$ref_X
+  
+  # Baseline survival at new.times for the reference participant
+  ref_grid       <- ref_X[rep(1L, length(new.times)), , drop = FALSE]
+  ref_grid$time  <- new.times
+  S_ref_on_grid  <- as.numeric(predict(fit.gam, newdata = ref_grid, type = "response"))
+  
+  # Linear predictor shift for newX
+  one_t                    <- new.times[1]
+  newX_fixed_time          <- as.data.frame(newX)
+  newX_fixed_time$time     <- one_t
+  ref_fixed_time           <- ref_X
+  ref_fixed_time$time      <- one_t
+  
+  link_newX <- as.numeric(predict(fit.gam, newdata = newX_fixed_time, type = "link"))
+  link_ref  <- as.numeric(predict(fit.gam, newdata = ref_fixed_time,  type = "link"))
+  
+  eta_shift <- link_newX - link_ref
+  
+  # Combine
+  S_ref_safe <- pmax(pmin(S_ref_on_grid, 1 - 1e-12), 1e-12)
+  pred <- t(outer(log(S_ref_safe), exp(eta_shift), "*"))
+  exp(pred)
+}
+
+# Idea: used smoothed random forest
+survSL.rfsrc.smooth <- function(time, event, X, newX, new.times, obsWeights, id,
+                                ntree = 500,
+                                nodesize = NULL,
+                                mtry = NULL,
+                                smooth_h = 30,
+                                ...) {
+  
+  # time=aug_tr$Y
+  # event=aug_tr$DeltaY
+  # X = aug_tr %>% dplyr::select(X, N, DeltaN)
+  # ntree = 500
+  # nodesize = NULL
+  # mtry = NULL
+  # newX = aug_te[1:20,]
+  # new.times=fit.times
+  # id = aug_tr$id
+  # obsWeights = aug_tr$w
+  # smooth_h=14
+  
+  # ----- Tune nodesize and mtry based on training set size -----
+  n_train <- length(time)
+  
+  if (is.null(nodesize)) {
+    # Force much larger leaves than the default 15
+    # Rule of thumb: nodesize ~ sqrt(n) gives good smoothing for survival
+    # Floor at 50 to avoid tiny-leaf instability
+    nodesize <- max(50L, floor(sqrt(n_train)))
+  }
+  
+  if (is.null(mtry)) {
+    # Use a smaller fraction of variables per split for stability
+    # Default is sqrt(p); we use p/3 for survival to encourage smoother trees
+    mtry <- max(1L, floor(ncol(X) / 3))
+  }
+  
+  # ----- Fit RF -----
+  train_data <- data.frame(time = time, event = event, X)
+  
+  fit <- randomForestSRC::rfsrc(
+    Surv(time, event) ~ .,
+    data           = train_data,
+    case.wt        = obsWeights,
+    ntree          = ntree,
+    nodesize       = nodesize,
+    mtry           = mtry,
+    samptype       = "swor",       # sampling without replacement is more stable
+    sampsize       = function(x) min(x, max(100, floor(0.632 * x))),
+    splitrule      = "logrank",
+    importance     = "none",       # skip importance for speed
+    save.memory    = TRUE#,
+    #...
+  )
+  
+  # ----- Predict on newX at the original RF event time grid -----
+  #pred_obj  <- predict(fit, newdata = as.data.frame(newX), na.action = "na.impute", importance="none")$survival
+  rf_times  <- fit$time.interest
+  rf_surv   <- predict(fit, newdata = as.data.frame(newX), na.action = "na.impute", importance="none")$survival
+  
+  # ----- Smooth each row's survival curve using Gaussian kernel on the time axis -----
+  # The convolution preserves S(0) ≈ 1 and decays smoothly
+  #smooth_h = 30
+  if(is.null(smooth_h)){
+  mu = sum(X$N * obsWeights)/sum(obsWeights)
+  smooth_h = 1.06 * sqrt(sum(obsWeights * (X$N - mu)^2)/sum(obsWeights)) * (sum(obsWeights)^2/sum(obsWeights^2))^(-1/5)
+  }
+  
+  smooth_row <- function(s) {
+    if (length(rf_times) < 2L) return(s)
+    smoothed <- sapply(seq_along(rf_times), function(j) {
+      w <- dnorm(rf_times - rf_times[j], sd = smooth_h)
+      sum(w * s) / sum(w)
+    })
+    # Enforce monotonicity (right-continuous, non-increasing)
+    rev(cummax(rev(smoothed)))
+  }
+  
+  rf_surv_smooth <- t(apply(rf_surv, 1, smooth_row))
+  
+  # ----- Interpolate smoothed predictions onto new.times grid -----
+  pred <- t(apply(rf_surv_smooth, 1, function(s) {
+    approx(x      = rf_times,
+           y      = s,
+           xout   = new.times,
+           method = "linear",
+           yleft  = 1,
+           yright = min(s),
+           ties   = "ordered")$y
+  }))
+  
+  # Ensure predictions are in [0, 1] and monotone in t
+  pred <- pmin(pmax(pred, 0), 1)
+  pred <- t(apply(pred, 1, function(s) rev(cummax(rev(s)))))
+  
+  fit_obj <- list(
+    fit      = fit,
+    smooth_h = smooth_h,
+    rf_times = rf_times
+  )
+  class(fit_obj) <- "survSL.rfsrc.smooth"
+  
+  list(pred = pred, fit = fit_obj)
+}
+
+predict.survSL.rfsrc.smooth <- function(object, newX, new.times, ...) {
+  fit       <- object$fit
+  smooth_h  <- object$smooth_h
+  
+  pred_obj  <- predict(fit, newdata = as.data.frame(newX), na.action = "na.impute")
+  rf_times  <- pred_obj$time.interest
+  rf_surv   <- pred_obj$survival
+  
+  smooth_row <- function(s) {
+    if (length(rf_times) < 2L) return(s)
+    smoothed <- sapply(seq_along(rf_times), function(j) {
+      w <- dnorm(rf_times - rf_times[j], sd = smooth_h)
+      sum(w * s) / sum(w)
+    })
+    rev(cummin(rev(smoothed)))
+  }
+  
+  rf_surv_smooth <- t(apply(rf_surv, 1, smooth_row))
+  
+  pred <- t(apply(rf_surv_smooth, 1, function(s) {
+    approx(x      = rf_times,
+           y      = s,
+           xout   = new.times,
+           method = "linear",
+           yleft  = 1,
+           yright = min(s),
+           ties   = "ordered")$y
+  }))
+  
+  pred <- pmin(pmax(pred, 0), 1)
+  t(apply(pred, 1, function(s) rev(cummin(rev(s)))))
+}
+
 
 .CFsurvival.nuis.opt <- function(cross.fit = TRUE, V = ifelse(cross.fit, 10, 1), folds = NULL, eval.times = NULL,
                                 event.SL.library = lapply(c("survSL.km", "survSL.coxph", "survSL.expreg", "survSL.weibreg", "survSL.loglogreg", "survSL.gam", "survSL.rfsrc"), function(alg) c(alg, "survscreen.glmnet", "survscreen.marg", "All") ),  event.pred.0 = NULL, event.pred.1 = NULL,
@@ -673,7 +1008,8 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
   # SY_pred is (nrow(aug_tr) x K)
   
   K <- length(fit.times)
-  Y_idx <- findInterval(aug_tr$Y, c(0, fit.times), rightmost.closed = FALSE) #FIXED
+  #Y_idx <- findInterval(aug_tr$Y, c(0, fit.times), rightmost.closed = FALSE) #FIX
+  Y_idx <- findInterval(aug_tr$Y, fit.times, left.open = TRUE)+1
   Y_idx <- pmax(1L, pmin(Y_idx, K))
   
   n_aug <- nrow(aug_tr)
@@ -1037,7 +1373,8 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
     fast_iter_library = NULL,
     verbose           = TRUE,
     logN              = FALSE,
-    weight_norm       = c("max", "L2")
+    weight_norm       = c("max", "L2"),
+    ...
 ) {
   
   stopifnot(max_iter >= 1L)
@@ -1052,7 +1389,7 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
   AW_ce_te <- rbind(cbind(A = 0L, W_te), cbind(A = 1L, W_te))
   
   full_event_lib <- nuis$event.SL.library_SY[nuis$event.SL.library_SY != "survSL.km"]
-  full_cens_lib  <- "survSL.km"
+  full_cens_lib  <- nuis$cens.SL.library
   
   has_fast <- !is.null(fast_iter_library) && length(fast_iter_library) >= 1L
   
@@ -1219,7 +1556,7 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
     }
     
     eps   <- 1e-6 * max(1, N0)
-    S_all <- survest_N(t = c(N0 - eps, N_grid), x = xi, a = Ai)
+    S_all <- survest_N(t = c(N0 - eps, N_grid), x = xi)
     #S_lag <- c(S_all[1], S_all[-length(S_all)])[-1]  # left limits at N_grid
     # equivalently: S_lag = c(S_N0_minus, S_grid[-last])
     S_N0_minus <- S_all[1]
@@ -1275,7 +1612,8 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
   
   # Helper: find last fit.time <= t_val (right-continuous step function index)
   find_idx <- function(t_val, grid) {
-    idx <- findInterval(t_val, grid, rightmost.closed=FALSE) #FIXED
+    #old idx <- findInterval(t_val, grid, rightmost.closed=FALSE)
+    idx <- findInterval(t_val, grid, left.open=TRUE)+1 #FIXED
     pmax(1L, pmin(idx, length(grid)))
   }
   
@@ -1287,8 +1625,8 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
     aug_idx <- id_to_aug[[as.character(idi)]]
     
     # Prior: discrete PMF of N on eval.times under each arm
-    SN1 <- survest_N(t=eval.times, x=xi, a=1)
-    SN0 <- survest_N(t=eval.times, x=xi, a=0)
+    SN1 <- survest_N(t=eval.times, x=xi)
+    SN0 <- survest_N(t=eval.times, x=xi)
     pr1 <- pmax(0, c(1, SN1[-l]) - SN1)
     pr0 <- pmax(0, c(1, SN0[-l]) - SN0)
     
@@ -1336,13 +1674,13 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
     fit.times, eval.times,
     ids,
     S.hats,
-    G.hats,                  # length K -- oracle G_Y(t)
+    G.hats, # G_Y predictions for compensator and inner1
+    GN.hats, #G_N predictions : (n x l) for the participant's target arm.
     g.hats,                  # length n -- pi(a0 | x)
     fN_a0, fN_alt,           # n x l posterior matrices
     isotonize = TRUE,
     verbose   = TRUE,
-    single_cens_mechanism = TRUE
-) {
+    single_cens_mechanism = TRUE) {
   
   # Y       = dat_te$Y;
   # DeltaY  = dat_te$DeltaY;
@@ -1410,11 +1748,15 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
     
     # K_N on eval.times grid
     if (single_cens_mechanism) {
+      # Original: K_N derived from G_Y under common censoring
       K_N <- sapply(eval.times,
                     FUN = function(t) {
                       DeltaY[i] * GYi_fun(pmax(t, Y[i])) / GYi_fun(Y[i]) +
                         (1 - DeltaY[i]) * as.numeric(t <= Y[i])
                     })
+    }else{
+      # New: K_N evaluated from estimated G_N at participant i's (A_i, X_i, Y_i, DeltaY_i)
+      K_N <- GN_pred[i, ]   # length l, K_N(eval.times[j]) for this participant
     }
     
     KN_fun       <- stepfun(eval.times, c(1, K_N), right = TRUE)
@@ -1442,9 +1784,9 @@ survSL.rfsrc.fast <- function (time, event, X, newX, new.times, obsWeights, id, 
       num_cs <- rev(cumsum(rev(IF_k * fN.i))) # l x 1
       Q_seq  <- num_cs / pmax(denom_cs, 1e-12)
       
-      if(K_N[(N_indx)]==0){
-        KNi <- K_N[(N_indx-1)]
-      }else{
+      if (K_N[N_indx] == 0) {
+        KNi <- if (N_indx >= 2L) K_N[N_indx - 1L] else 1.0
+      } else {
         KNi <- K_N[N_indx]
       }
       

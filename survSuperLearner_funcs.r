@@ -66,7 +66,15 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
   p_event <- dim(X_event)[2L]
   p_cens <- dim(X_cens)[2L]
   
-  .checkInputs(time=time, event=event, X_event = X_event, X_cens = X_cens, newX_event=newX_event, newX_cens=newX_cens, id=id, obsWeights=obsWeights, verbose=verbose)
+  .checkInputs(time=time, 
+               event=event, 
+               X_event = X_event, 
+               X_cens = X_cens, 
+               newX_event=newX_event, 
+               newX_cens=newX_cens, 
+               id=id, 
+               obsWeights=obsWeights, 
+               verbose=verbose)
   
   if (is.null(control$event.t.grid)) {
     control$event.t.grid <- seq(0, max(time[event == 1]), length.out = 250)
@@ -103,6 +111,7 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
   cens.kScreen <- length(cens.library$screenAlgorithm)
   ### These are the steps that are leading to computational exhaustion
   event.Z <- array(NA, dim = c(N, length(control$event.t.grid), event.k))
+  #print(dim(event.Z)) #FLAG
   cens.Z <- array(NA, dim = c(N, length(control$cens.t.grid), cens.k))
   event.libraryNames <- cbind(predAlgorithm = event.library$library$predAlgorithm,
                               screenAlgorithm = event.library$screenAlgorithm[event.library$library$rowScreen])
@@ -120,7 +129,7 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
   cens.errorsInCVLibrary <- cens.errorsInLibrary <- rep(0, cens.k)
   
   validRows <- .survCVFolds2(N = N, id = id, event = event, cvControl = cvControl)
-  
+  #print(validRows) #FLAG
   if (is.null(id)) id <- seq(N)
   
   ### Get cross-validated survivals for S and T
@@ -135,10 +144,12 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
     tempWhichScreen <- matrix(NA, nrow = kScreen, ncol = p)
     tempId <- id[-valid]
     tempObsWeights <- obsWeights[-valid]
+    #print(kScreen) #FLAG
     for (s in seq(kScreen)) {
       if(verbose) message(paste("CV ", library$screenAlgorithm[s],
                                 ", fold ", foldNum, sep = ""))
       screen_fn <- get(library$screenAlgorithm[s])
+      #print(screen_fn) #FLAG
       testScreen <- try(do.call(screen_fn, list(time = tempTime,
                                                 event = tempEvent,
                                                 X = tempLearn, id = tempId,
@@ -157,7 +168,8 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
                       " is: ", sum(tempWhichScreen[s, ]), sep = ""))
       }
     }
-    
+
+    # Return to SurvSuperLearner default
     uniqueScreen <- unique(tempWhichScreen)
     screenMap <- apply(uniqueScreen, 1, function(row) which(apply(tempWhichScreen, 1, function(row2) all.equal(row, row2) == TRUE)))
     
@@ -166,6 +178,7 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
     for (predAlg in unique(library$library$predAlgorithm)) {
       if (verbose) message(paste("CV ", predAlg, ", fold ", foldNum, sep = ""))
       pred_fn <- get(predAlg)
+      #print(pred_fn) #FLAG
       for(j in seq(nrow(uniqueScreen))) {
         testAlg <- try(do.call(pred_fn, list(time = tempTime, event = tempEvent,
                                              X = subset(tempLearn, select = uniqueScreen[j,], drop = FALSE),
@@ -200,6 +213,7 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
   }
   
   event.errorsInCVLibrary <- apply(event.Z, 3, anyNA)
+  #print(event.errorsInCVLibrary)
   if (sum(event.errorsInCVLibrary) > 0) event.Z[, , as.logical(event.errorsInCVLibrary)] <- 0
   if (all(event.Z == 0))  stop("All algorithms dropped from event library")
   
@@ -472,7 +486,7 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
 #   return(out)
 # }
 
-# Functionn which checks inputs to survSuperLearner2
+# Function which checks inputs to survSuperLearner2
 .checkInputs <- function(time, event, X_event, newX_event, X_cens, newX_cens, id, obsWeights, verbose) {
   if(any(time < 0)) stop("Only non-negative event/censoring times allowed!")
   if(any(!(event %in% c(0,1)))) stop("Event must be binary.")
@@ -543,7 +557,7 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
     NumberScreen <- (sapply(survSL.library, FUN = length) - 1)
     if (sum(NumberScreen == 0) > 0) {
       for (ii in which(NumberScreen == 0)) {
-        SL.library[[ii]] <- c(SL.library[[ii]], "All")
+        survSL.library[[ii]] <- c(survSL.library[[ii]], "All")
         NumberScreen[ii] <- 1
       }
     }
@@ -705,11 +719,8 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
   
   initWeightAlg <- get(control$initWeightAlg)
   if (control$initWeight == "censoring") {
-    # initFit <- try({initWeightAlg(time = time, event = 1 - event, X = X_cens, newX = X_cens,
-    #                          new.times = time - epsilon,
-    #                          obsWeights = obsWeights, id = id)})
-    # 
-    # if(inherits(initFit, "try-error")){
+    
+    # 1. Initialize baseline censoring model (G)
     initFit <- survSL.km(
       time = time,
       event = 1 - event,
@@ -719,13 +730,11 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
       obsWeights = obsWeights,
       id = id
     )
-    #}else{
-    #  
-    #}
     
+
+    # Extract basleine censoring probabilities
     # Vector to store subject-specific values
     obs.cens.vals <- numeric(N)
-    
     # Loop over subjects (memory-efficient)
     for (i in seq_len(N)) {
       obs.cens.vals[i] <- approx(
@@ -737,16 +746,15 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
       )$y
     }
     
-    #### obs.event.vals -- where does it come from?
+    # 3. Use baseline G weights to fit the first iteration of EVENT coefficients
     S.coef <- rep(0, event.k)
     S.coef[!event.errorsInLibrary] <- .survcomputeCoef_stream(
-      time = time, event = 1 - event, t.grid = control$cens.t.grid, cens.vals = obs.cens.vals,
-      Z= cens.Z[, , !cens.errorsInLibrary, drop = FALSE], obsWeights = obsWeights)
+      time = time, event = event, t.grid = control$event.t.grid, cens.vals = obs.cens.vals,
+      Z= event.Z[, , !event.errorsInLibrary, drop = FALSE], obsWeights = obsWeights)
     
     
-    # Vector to store subject-specific values
+    # 4. Generate preliminary event predictions needed to enter the while loop
     obs.event.vals <- numeric(N)
-    
     obs.event.vals <- as.numeric(event.Z.obs %*% S.coef)
     
     #obs.event.vals <- rep(c(event.Z.obs %*% S.coef), length(control$cens.t.grid))
@@ -754,14 +762,14 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
     initFit <- initWeightAlg(time = time, event = event, X = X_event, newX = X_event,
                              new.times = time,
                              obsWeights = obsWeights, id = id)
-    obs.event.vals <- rep(diag(initFit$pred), length(control$cens.t.grid))
+    obs.event.vals <- rep(diag(initFit$pred), length(control$event.t.grid))
   }
+  #Protect against exact zeros before entering the loop
   obs.event.vals[obs.event.vals == 0] <- min(obs.event.vals[obs.event.vals > 0])
   
   iter <- 1
   while(TRUE) {
-    #print(iter)
-    #gc()
+    
     if(iter > control$max.SL.iter) {
       warning("Did not converge in ", control$max.SL.iter, " iterations")
       break
@@ -779,12 +787,15 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
       obsWeights = obsWeights)
     
     obs.cens.vals <- as.numeric(cens.Z.obs %*% G.coef)
-    #obs.cens.vals <- rep(c(cens.Z.obs %*% G.coef), length(control$event.t.grid))
     obs.cens.vals[obs.cens.vals == 0] <- min(obs.cens.vals[obs.cens.vals > 0])
     
     S.coef[!event.errorsInLibrary] <- .survcomputeCoef_stream(
-      time = time, event = event, t.grid = control$event.t.grid, cens.vals = obs.cens.vals,
-      Z= event.Z[, , !event.errorsInLibrary, drop = FALSE], obsWeights = obsWeights)
+      time = time, 
+      event = event, 
+      t.grid = control$event.t.grid, 
+      cens.vals = obs.cens.vals,
+      Z= event.Z[, , !event.errorsInLibrary, drop = FALSE], 
+      obsWeights = obsWeights)
     
     obs.event.vals <- as.numeric(event.Z.obs %*% S.coef)
     obs.event.vals[obs.event.vals == 0] <- min(obs.event.vals[obs.event.vals > 0])
@@ -807,28 +818,19 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
   for (j in seq_len(event.k)) {
     risk <- 0
     for (tt in seq_along(control$event.t.grid)) {
-      y <- 1 - as.numeric(time <= control$event.t.grid[tt]) *
-        event / obs.cens.vals
+      y <- 1 - as.numeric(time <= control$event.t.grid[tt]) * event / obs.cens.vals
       res <- y - event.Z[, tt, j]
       risk <- risk + sum(obsWeights * res * res)
     }
     event.cvRisks[j] <- risk / (length(control$event.t.grid) * sum(obsWeights))
   }
   
-  # event.cvRisks <- apply(event.Z.long, 2, function(col) {
-  #   -mean(obsWeights.event.long * ifelse(time.event.long <= event.t.grid.long & event.event.long == 1,
-  #                                            (1 - 1/obs.cens.vals) * log(col) + (1 / obs.cens.vals) * log(1 - col),
-  #                                            log(col)))
-  # })
-  # cens.cvRisks <- apply(cens.Z.long, 2, function(col) {
-  #   mean((obsWeights.cens.long * (1-event.cens.long) / obs.event.vals) * (as.numeric(time.cens.long > cens.t.grid.long) - col)^2)
-  # })
   cens.cvRisks <- numeric(cens.k)
   for (j in seq_len(cens.k)) {
     risk <- 0
     for (tt in seq_along(control$cens.t.grid)) {
       y <- 1 - as.numeric(time <= control$cens.t.grid[tt]) *
-        event / obs.cens.vals
+        (1-event) / obs.event.vals
       res <- y - cens.Z[, tt, j]
       risk <- risk + sum(obsWeights * res * res)
     }
