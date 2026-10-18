@@ -41,7 +41,7 @@ run_on_cluster(
     
     sim %<>% set_levels(
       #n=c(1200, 2400, 4800),
-      n=c(2400, 4000),
+      n=c(2000, 4000),
       trt_prob=0.5,
       RR = c(0.75), #25% efficacy
       RR_C = c(1),
@@ -52,7 +52,6 @@ run_on_cluster(
       J=1,
       rho=c(0, 0.5, 0.8),
       X = TRUE,
-      #rho_X = c(0.1, 0.5),
       rho_X = c(0),
       admin_date = 2
     )
@@ -67,17 +66,15 @@ run_on_cluster(
     
     sim %<>% set_script(function(){
       
-      source("./create_multivar_survival.r")
-      source("./CFSurvival_funcs.r")
-      rm(CFsurvival2)
-      rm(CFsurvival3)
-      source("./survSuperLearner_funcs.r")
+      source("./create_multivariate_survival_data.R")
+      source("./counterfactual_survival_estimators.R")
+      source("./survival_super_learner.R")
       
       message("[1] Generating survival data")
       
-      #L<-sim$levels_grid[5,]
+      #L<-sim$levels_grid[1,]
       
-      data <- create_multivar_survival(n=L$n, 
+      data <- simulate_correlated_survival_data(n=L$n, 
                                        trt_prob=L$trt_prob, 
                                        RR = L$RR, 
                                        RR_C = L$RR_C, 
@@ -96,7 +93,9 @@ run_on_cluster(
       
       km_fit<-survfit(Surv(Y, DeltaY)~A, data=data) 
       
-      km<-summary(km_fit, times=((L$admin_date*365)))
+      #km<-summary(km_fit, times=((L$admin_date*365)))
+      
+      km<-summary(km_fit, times=max(data$Y), extend=TRUE)
       
       res_KM <- list(
         "logRR"=log((1-km$surv[2])/(1-km$surv[1])),
@@ -130,7 +129,7 @@ run_on_cluster(
         fit.treat = c(0,1), 
         nuisance.options = CFsurvival.nuisance.options(
           cross.fit = TRUE,
-          V = 8,
+          V = 6,
           folds = NULL,
           eval.times = NULL,
           event.SL.library = c("survSL.coxph", 
@@ -168,8 +167,8 @@ run_on_cluster(
       rm(est0)
       gc()
       
-      source("./oracle_attempt.R")
-
+      source("./oracle_nci_adjustment.R")
+      
       oracle <- AIPWCC_newEIF_oracle(
         time=data$Y,
         event=data$DeltaY,
@@ -180,13 +179,14 @@ run_on_cluster(
         W=data.frame(X=data$X),
         id=1:nrow(data),
         fit.times        = sort(unique(data$Y)),
+        eval.times       = seq(0, 730, by=1),
         fit.treat        = c(0, 1),
         conf.band        = FALSE,
         conf.level       = 0.95,
         contrasts        = c("risk.ratio"),
         verbose          = TRUE,
         dgm_params       = list(
-          n = 10000000,
+          n = 5000000,
           trt_prop = L$trt_prob,
           RR = L$RR,
           RR_C = L$RR_C,
@@ -197,7 +197,7 @@ run_on_cluster(
           admin_date = L$admin_date,
           rho_X = L$rho_X)
       )
-
+      
       results <- bind_rows(results,
                            data.frame("logRR"=tail(oracle$risk.ratio$log.risk.ratio, 1),
                                       "logRR_lci" = tail(oracle$risk.ratio$ptwise.lower.log, 1),
@@ -206,20 +206,14 @@ run_on_cluster(
                                       "type"="NCI-adj (Oracle)")
       )
       
+      rm(oracle)
+      
       message("[4] Running NCI-Adj Analysis (IF-based variance)")
-      source("./AIPWCC_em_newEIF_index_correct_2.R")
+      source("./nci_adjustment_em.R")
       
-      #eval.times <- sort(unique(c(data$N1, L$admin_date*365)))
+      eval.times <- sort(unique(c(0, data$N1)))
       
-      eval.times <- sort(
-      unique(
-        c(
-        round(quantile(data$N1[data$DeltaN1==1], probs = seq(0, 1, length.out=199)), digits=0), 
-        365 * L$admin_date)
-      )
-      )
-      
-      est1 <- AIPWCC_newEIF_em(
+      est1 <- AIPWCC_EIF_em(
         time = data$Y,
         event = data$DeltaY,
         time_N = data$N1,
@@ -236,14 +230,14 @@ run_on_cluster(
         verbose=TRUE,
         nuisance.options = .CFsurvival.nuis.opt(
           cross.fit = TRUE,
-          V = 8,
+          V = 6,
           folds = NULL,
           eval.times = eval.times,
-          event.SL.library = c("survSL.coxph", "survSL.expreg", "survSL.km", "survSL.gam"),
-          event.SL.library_SY = c("survSL.coxph", "survSL.gam.w", "survSL.rfsrc.smooth"),
+          event.SL.library = c("survSL.coxph", "survSL.expreg", "survSL.km"),
+          event.SL.library_SY = c("survSL.coxph", "survSL.coxph.ps", "survSL.rfsrc"),
           event.pred.0 = NULL,
           event.pred.1 = NULL,
-          cens.SL.library = c("survSL.coxph", "survSL.expreg", "survSL.km", "survSL.gam.w"),
+          cens.SL.library = c("survSL.coxph", "survSL.expreg", "survSL.km", "survSL.coxph.ps"),
           cens.trunc = 0,
           cens.pred.0 = NULL,
           cens.pred.1 = NULL,
@@ -257,7 +251,9 @@ run_on_cluster(
         ), 
         single_cens_mechanism = TRUE,
         em = TRUE, 
-        em_fast = TRUE
+        em_fast = TRUE,
+        max_iter = 5,
+        tol  = 5E-4
       )
       
       tmp<-tail(est1$risk.ratio,1)

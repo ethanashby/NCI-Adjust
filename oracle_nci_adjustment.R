@@ -1,5 +1,5 @@
 # =============================================================================
-# AIPWCC_newEIF_em_oracle.r 
+# oracle_nci_adjustment.R
 # More memory efficient -- evaluates EIF at each inner CV loop to avoid memory exhaustion limits
 # ALSO implements new EIF calculation
 # USES ORACLE NUISANCE PARAMS
@@ -102,19 +102,19 @@ AIPWCC_newEIF_oracle <- function(
   # CROSS-FITTED NUISANCE ESTIMATION
   # ==================================================================
   
-  big_data_event <- create_multivar_survival(n=dgm_params$n, 
-                                   trt_prob=dgm_params$trt_prop, 
-                                   RR = dgm_params$RR, 
-                                   RR_C = dgm_params$RR_C, 
-                                   per_year_incidence_Y = dgm_params$per_year_incidence_Y, 
-                                   per_year_incidence_N = dgm_params$per_year_incidence_N, 
-                                   per_year_incidence_C = 1E-16,
-                                   J = 1, 
-                                   rho = dgm_params$rho, 
-                                   admin_date = dgm_params$admin_date,
-                                   X=TRUE,
-                                   rho_X = dgm_params$rho_X, 
-                                   convert_days = TRUE)
+  big_data_event <- simulate_correlated_survival_data(n=dgm_params$n, 
+                                             trt_prob=dgm_params$trt_prop, 
+                                             RR = dgm_params$RR, 
+                                             RR_C = dgm_params$RR_C, 
+                                             per_year_incidence_Y = dgm_params$per_year_incidence_Y, 
+                                             per_year_incidence_N = dgm_params$per_year_incidence_N, 
+                                             per_year_incidence_C = 1E-16,
+                                             J = 1, 
+                                             rho = dgm_params$rho, 
+                                             admin_date = dgm_params$admin_date,
+                                             X=TRUE,
+                                             rho_X = dgm_params$rho_X, 
+                                             convert_days = TRUE)
   
   fit_S_N <- survfit(Surv(N1, DeltaN1) ~ 1, data=big_data_event)
   
@@ -136,7 +136,7 @@ AIPWCC_newEIF_oracle <- function(
                      dimnames=list(arm=c("0","1"), n_idx=NULL, t_idx=NULL))
   
   if(verbose){
-  pb <- progress_bar$new(length(eval.times)*2, format="  S_{0Y}(y | a,x,n) [:bar] :percent ETA: :eta")
+    pb <- progress_bar$new(length(eval.times)*2, format="  S_{0Y}(y | a,x,n) [:bar] :percent ETA: :eta")
   }
   for (a in c(0L, 1L)) {
     for (s in seq_along(eval.times)) {
@@ -275,10 +275,10 @@ AIPWCC_newEIF_oracle <- function(
   G_0Y_oracle <- function(t, a, x = NULL) {
     exp(-lambda_C * t)   # arm-independent in your DGM
   }
-
+  
   SY_block_a0 <- S_Y_array[1,,]
   SY_block_a1 <- S_Y_array[2,,]
-   
+  
   fN_1 <- f_N_post_predict_oracle(data %>% mutate(A=1)) # n x l
   
   fN_0 <- f_N_post_predict_oracle(data %>% mutate(A=0)) # n xl
@@ -431,7 +431,7 @@ AIPWCC_newEIF_oracle <- function(
 # HELPER: Bayes-rule posterior f_N on test fold
 # ==================================================================
 .compute_posterior_fN <- function(dat_te, aug_te, SY0, SY1,
-                                    survest_N, fit.times, eval.times, W_names) {
+                                  survest_N, fit.times, eval.times, W_names) {
   
   n_te <- nrow(dat_te)
   l    <- length(eval.times) #NOTE THAT l includes the 0 appended to the left hand side of eval.times, before which there are no events
@@ -584,8 +584,8 @@ AIPWCC_newEIF_oracle <- function(
     
     # K_N on eval.times grid
     if (single_cens_mechanism) {
-    
-       K_N_right <- sapply(eval.times,
+      
+      K_N_right <- sapply(eval.times,
                           FUN = function(t) {
                             DeltaY[i] * GYi_fun_lhl(pmax(t, Y[i])) / GYi_fun_lhl(Y[i]) +
                               (1 - DeltaY[i]) * as.numeric(t <= Y[i])

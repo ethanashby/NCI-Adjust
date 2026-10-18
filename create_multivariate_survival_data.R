@@ -1,4 +1,6 @@
-generate_lambdas<-function(eval_time=1, per_year_incidence=0.05, RR){
+# Data-generating mechanism for correlated survival outcomes and censoring.
+
+incidence_to_hazards<-function(eval_time=1, per_year_incidence=0.05, RR){
   
   #Derived from CDF of exponential distn
   lambda_0 = - log(1-per_year_incidence)
@@ -7,7 +9,7 @@ generate_lambdas<-function(eval_time=1, per_year_incidence=0.05, RR){
   return(c("lambda_0"=lambda_0, "lambda_1"=lambda_1))
 }
 
-# create_multivar_survival <- function(n,
+# simulate_correlated_survival_data <- function(n,
 #                         trt_prob,
 #                         RR,
 #                         RR_C,
@@ -35,9 +37,9 @@ generate_lambdas<-function(eval_time=1, per_year_incidence=0.05, RR){
 #   # rho=0.7
 #   # trt_prob=0.5
 #   
-#   lambdas_Y=generate_lambdas(eval_time=1, per_year_incidence=per_year_incidence_Y, RR=RR)
-#   lambdas_N=generate_lambdas(eval_time=1, per_year_incidence = per_year_incidence_N, RR=1)
-#   lambdas_C=generate_lambdas(eval_time=1, per_year_incidence = per_year_incidence_C, RR = RR_C)
+#   lambdas_Y=incidence_to_hazards(eval_time=1, per_year_incidence=per_year_incidence_Y, RR=RR)
+#   lambdas_N=incidence_to_hazards(eval_time=1, per_year_incidence = per_year_incidence_N, RR=1)
+#   lambdas_C=incidence_to_hazards(eval_time=1, per_year_incidence = per_year_incidence_C, RR = RR_C)
 #   
 #   if(X==FALSE){
 #   Sigma <- diag(1, J+2)
@@ -165,7 +167,7 @@ generate_lambdas<-function(eval_time=1, per_year_incidence=0.05, RR){
 #   return(observed_vars)
 # }
 
-create_multivar_survival <- function(n,
+simulate_correlated_survival_data <- function(n,
                                      trt_prob,
                                      RR,
                                      RR_C,
@@ -195,9 +197,9 @@ create_multivar_survival <- function(n,
   # X=TRUE
   # rho_X = 0.3
   
-  lambdas_Y=generate_lambdas(eval_time=1, per_year_incidence=per_year_incidence_Y, RR=RR)
-  lambdas_N=generate_lambdas(eval_time=1, per_year_incidence = per_year_incidence_N, RR=1)
-  lambdas_C=generate_lambdas(eval_time=1, per_year_incidence = per_year_incidence_C, RR = RR_C)
+  lambdas_Y=incidence_to_hazards(eval_time=1, per_year_incidence=per_year_incidence_Y, RR=RR)
+  lambdas_N=incidence_to_hazards(eval_time=1, per_year_incidence = per_year_incidence_N, RR=1)
+  lambdas_C=incidence_to_hazards(eval_time=1, per_year_incidence = per_year_incidence_C, RR = RR_C)
   lambdas<-c(lambdas_Y, lambdas_C, lambdas_N)
   
   if(X==TRUE){
@@ -301,7 +303,7 @@ create_multivar_survival <- function(n,
 }
 
 # set.seed(2)
-# test <- create_multivar_survival(n=3000,
+# test <- simulate_correlated_survival_data(n=3000,
 #                     trt_prob=0.5,
 #                     RR=0.7,
 #                     RR_C = 1.7,

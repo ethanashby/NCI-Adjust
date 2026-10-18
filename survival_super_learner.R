@@ -168,7 +168,7 @@ survSuperLearner2 <- function(time, event, X_event, X_cens, newX_event = NULL, n
                       " is: ", sum(tempWhichScreen[s, ]), sep = ""))
       }
     }
-
+    
     # Return to SurvSuperLearner default
     uniqueScreen <- unique(tempWhichScreen)
     screenMap <- apply(uniqueScreen, 1, function(row) which(apply(tempWhichScreen, 1, function(row2) all.equal(row, row2) == TRUE)))
@@ -731,7 +731,7 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
       id = id
     )
     
-
+    
     # Extract basleine censoring probabilities
     # Vector to store subject-specific values
     obs.cens.vals <- numeric(N)
@@ -874,6 +874,3 @@ survSuperLearner.CV.control <- function (V = 10L, stratifyCV = TRUE, shuffle = T
   coef / sum(coef)
 }
 
-.alogb <- function(a,b) {
-  ifelse(a == 0, )
-}
